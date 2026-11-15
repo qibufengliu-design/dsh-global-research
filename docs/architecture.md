@@ -105,6 +105,15 @@ research(question, depth, focus, mode, context, researchId, text, saveTo)
 - 页面兜底：模型只引用了部分页面时，没被引用的页面各补一条启发式证据（官方/通道页段落门槛 60 字符，其余 120 字符），避免「读到了却没采用」。
 - 证据抽取并行：按 2 页一批（`EVIDENCE_CONCURRENCY = 2`）同时抽，单批失败（典型是双批并发下的 provider 429）记日志后回落逐页启发式；结果按批序合并，`[S#]` 编号与「参考」顺序与串行完全一致（0.9.5）。
 
+## 价目页定向与比价表完整性（0.9.6）
+
+比价题（`pricing` / compare）在报告前会对零证据选项做一次定向回补（0.9.2 起），0.9.6 把这套链路收紧了：
+
+- **厂商价目站映射**：`PRICING_HOSTS` 把 `豆包|doubao|火山方舟` → `volcengine.com`、`qwen|通义|千问` → `help.aliyun.com`、`deepseek` → `api-docs.deepseek.com`、`kimi|moonshot` → `platform.moonshot.cn`、`glm|智谱` → `open.bigmodel.cn`；`pricingHostFor()` 取映射，`pricingTargetQueries()` 把回补 query 从「<选项> 官方 价格」改成 `site:<host> <选项> 价格 tokens 百万`，没有映射的选项回落「<选项> API 价格 每百万 tokens」。
+- **回补页优先吃证据预算**：`pricingHostsFirst()` / `pricingFirst()` 把命中厂商主机的页排到证据批最前——墙钟取消只影响靠后的批次，页进了 `pages` 却排在末尾等于没进证据。
+- **引用校验只对回补页放宽**：`validateCitations(brief, sources, { refillUrls, maxKept = 2 })` 不再无条件丢弃未被引用的来源；属于定向回补页的保留最多 2 条，并在「参考」标「（已检索，未被采用）」。`adoptedSources` / `adoptedUrls` / `officialAdopted` 仍只统计真正被引用的（`citedOnly`），采用率不会被虚高。
+- **比价表完整性**：`checkCompareRows(brief, { options, stats })` 解析「## 方案对比」第一张表，按候选逐个确认是否**独立成行**。被并格（如 `qwen / 豆包 API`）的候选在表后补「> 注意：<候选> 未作为独立行出现（价格未取得），下表结论不含该候选。」；独立成行但价格列是 `未核实 / 未知 / —` 的补「（无来源）」。结果写 `stats.compareRowsComplete`。合成提示词同时加硬规则：每个候选必须独立一行，禁止用 `/`、`、`、`与`、`和` 合并候选。
+
 ## 冲突三分
 
 简报的「## 存在冲突」分三类，某一类为空时写 `- 无`，三类都空则整段不出现：
