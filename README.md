@@ -188,7 +188,7 @@ config:
 Get-ChildItem test\*.test.js | ForEach-Object { node $_.FullName }
 ```
 
-覆盖：URL 规范化与内容去重、预算、JSON 修复、引用校验、DDG 解析、引擎失败隔离与自动禁用、付费引擎解析与 key 来源、垂直源选择与解析（GitHub/arXiv/StackExchange/npm/HN/PyPI，含垃圾 payload、纯中文 query 跳过、SE 标签映射与 intitle 回退、单源失败隔离）、管线十步（假引擎/假抓取/假模型，含检索计划优先与 ghost citation 清理）、阶段耗时（六个阶段的整数毫秒、快跑不进简报）、官方链接挖掘与预算边界、EUR-Lex Cellar 映射与回退、EUR-Lex 摘要页/搜索页降权与 ELI 原文优先、EU 站点语言前缀归一、法规问题回补预留页位、无一手源时回补强制官方域名 query、垂直源正文兜底与选择位保护、配置校验（类型强转/夹取/未知键 warning）、域名信任名单与黑名单过滤、缓存（key 归一、TTL、LRU、命中不调模型、focus 不同绕过、可关闭）、client 卡片解析（置信度徽章/来源数/耗时/失败与运行中状态/无分段兜底/阶段 chip 与缺段不渲染）、阶段摘要格式（>0.5s、最多 4 段、按阶段顺序输出）、`apply` 注册、skill 注册与端到端 execute。共 163 例。
+覆盖：URL 规范化与内容去重、预算、JSON 修复、引用校验、DDG 解析、引擎失败隔离与自动禁用、付费引擎解析与 key 来源、垂直源选择与解析（GitHub/arXiv/StackExchange/npm/HN/PyPI，含垃圾 payload、纯中文 query 跳过、SE 标签映射与 intitle 回退、单源失败隔离）、管线十步（假引擎/假抓取/假模型，含检索计划优先与 ghost citation 清理）、阶段耗时（六个阶段的整数毫秒、快跑不进简报）、官方链接挖掘与预算边界、EUR-Lex Cellar 映射与回退、EUR-Lex 摘要页/搜索页降权与 ELI 原文优先、EU 站点语言前缀归一、法规问题回补预留页位、无一手源时回补强制官方域名 query、垂直源正文兜底与选择位保护、配置校验（类型强转/夹取/未知键 warning）、域名信任名单与黑名单过滤、缓存（key 归一、TTL、LRU、命中不调模型、focus 不同绕过、可关闭）、client 卡片解析（置信度徽章/来源数/耗时/失败与运行中状态/无分段兜底/阶段 chip 与缺段不渲染）、阶段摘要格式（>0.5s、最多 4 段、按阶段顺序输出）、`apply` 注册、skill 注册与端到端 execute。共 228 例。
 
 ## 真实网络 e2e
 
@@ -221,6 +221,13 @@ $env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
 - **证据分级**：参考条目标注 官方 / 论文 / 仓库 / 论坛 / 百科 / 网页；`high` 置信度要求至少 2 个独立一手来源。
 - **论文源**：新增 OpenAlex 垂直源（免 key），命中带年份与被引次数。
 - **检索质量**：中文长问句额外切 ≤12 字片段做 query；planner 没给英文 query 时自动补拉丁词 query。
+
+## 0.5 新增能力（2026-11-15）
+
+- **策略引擎**：单一 `questionKind` 分类器收编原先 6 套隐式判定；7 类问题（tech-selection / fresh-data / contested / legal / troubleshoot / learning / concept）各有 query 模板、来源权重、必出章节与校验规则，`concept` 与默认策略的行为逐字不变。
+- **冲突检测**：结构冲突看论点是否相反，数值冲突看价格/版本/日期/容量在属性归一后是否并列（如「输出上限 384K vs 256K」）；数值冲突排在「## 存在冲突」最前面。
+- **参考完整性**：参考末尾追加「另有 N 个页面被读取但未采用（域名）」，把读过却没进参考的页面在明面上交代掉。
+- **一手来源**：价格类问题自动直取厂商价目页（DeepSeek / 阿里云 / 智谱 / 火山），取不到的写进「未解决」的「官方价目页未取到：域名」，不静默跳过。
 
 ## 安装与迁移到另一台机器
 
