@@ -1,10 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  autoDepthOf, classify, isCodeish, isFollowUp, isLegalText, isTimeSensitive, normalizeMode,
+  autoDepthOf, classify, isCodeish, isFollowUp, isLegalText, isPricingQuestion, isTimeSensitive, normalizeMode,
   resolveStrategy,
 } from '../lib/strategy.js'
-import { QUESTION_KINDS, STRATEGY_DEFAULTS } from '../lib/strategies.js'
+import { PRICING_SEEDS, QUESTION_KINDS, STRATEGY_DEFAULTS } from '../lib/strategies.js'
 import { DEPTH_PROFILES, buildQueries, resolveDepth, runResearch } from '../lib/pipeline.js'
 
 /*
@@ -312,4 +312,27 @@ test('runResearch applies a pack depth bias to an auto-derived quick run, then c
   assert.equal(biased.depthUsed, 'standard')
   const capped = await run({ strategy: clamped })
   assert.equal(capped.depthUsed, 'standard')
+})
+
+test('only pricing questions get official price-list seeds', () => {
+  assert.ok(isPricingQuestion('DeepSeek API 输入价格是多少'))
+  assert.ok(isPricingQuestion('AWS Lambda 按量计费怎么算'))
+  assert.ok(!isPricingQuestion('Node 22 什么时候发布'))
+  assert.ok(!isPricingQuestion('什么是 JavaScript 事件循环'))
+
+  // Default: every kind ships an empty seed list, so direct-URL fetching is
+  // untouched for everything that is not a pricing question.
+  assert.deepEqual(STRATEGY_DEFAULTS.sources.officialSeeds, [])
+  for (const kind of QUESTION_KINDS) {
+    const strategy = resolveStrategy({ questionKind: kind })
+    assert.deepEqual(strategy.sources.officialSeeds, [], kind)
+  }
+
+  const pricing = resolveStrategy({ questionKind: 'fresh-data', question: 'DeepSeek 和 Qwen 的输入价格谁便宜' })
+  assert.deepEqual(pricing.sources.officialSeeds, PRICING_SEEDS)
+  assert.equal(pricing.sources.officialSeeds.length, 4)
+
+  // Version/release questions keep the existing official-domain rule: no seeds.
+  const release = resolveStrategy({ questionKind: 'fresh-data', question: 'Node 22 什么时候发布' })
+  assert.deepEqual(release.sources.officialSeeds, [])
 })

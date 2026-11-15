@@ -161,3 +161,31 @@ test('drops a source that lists several values for one property at the same time
   ])
   assert.deepEqual(conflicts, [])
 })
+
+test('keeps units on price claims, so two vendors with different prices still conflict', () => {
+  const conflicts = findAssertionConflicts([
+    card('https://api-docs.deepseek.com/quick_start/pricing', 'DeepSeek（官方）：输入价格为 0.2 元/百万 tokens；输出价格为 0.8 元/百万 tokens'),
+    card('https://bigmodel.cn/pricing', '智谱（官方）：输入价格为 0.5 元/百万 tokens；输出价格为 1.5 元/百万 tokens'),
+  ])
+  const input = conflicts.find((conflict) => /输入价格/.test(conflict.attribute))
+  assert.ok(input, `expected an 输入价格 conflict, got ${conflicts.map((conflict) => conflict.attribute).join(', ')}`)
+  assert.deepEqual(
+    input.values.map((entry) => `${entry.value} ${entry.unit}`),
+    ['0.2 元/百万 tokens', '0.5 元/百万 tokens'],
+  )
+})
+
+test('reads numbers from the full claim+quote join instead of a truncated prefix', () => {
+  // The evidence card pipeline caps the displayed claim, so assertion extraction
+  // must still see the numbers that live further down in the quote.
+  const quote = `${'背景说明：按月计费，按量结算。'.repeat(8)}输入价格为 0.2 元/百万 tokens`
+  const assertions = ofKind(extractAssertions({
+    claim: '输入价格需要核对',
+    quote,
+    url: 'https://api-docs.deepseek.com/quick_start/pricing',
+    domain: 'api-docs.deepseek.com',
+  }), 'price')
+  assert.equal(assertions.length, 1)
+  assert.equal(assertions[0].value, '0.2')
+  assert.equal(assertions[0].unit, '元/百万 tokens')
+})

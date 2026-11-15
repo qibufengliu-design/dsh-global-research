@@ -783,3 +783,66 @@ test('a declared missing section gets a placeholder and costs one confidence not
   assert.equal(declared.confidence, downgradeConfidence(base.confidence))
   assert.ok(declared.confidence !== base.confidence, `expected a notch below ${base.confidence}`)
 })
+
+test('a pricing question pre-fetches the official price lists before search', async () => {
+  const fetched = []
+  const config = baseConfig()
+  config.__fetchPage = fakeFetcher(fetched)
+  const result = await runResearch({
+    question: 'DeepSeek API 现在的输入价格是多少',
+    depth: 'quick',
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.equal(fetched[0], 'https://api-docs.deepseek.com/quick_start/pricing')
+  assert.equal(fetched[1], 'https://help.aliyun.com/zh/model-studio/models')
+  assert.equal(result.stats.directUrls, 2)
+  assert.equal(result.stats.officialFetchFailures, undefined)
+})
+
+test('a non-pricing question fetches no price-list seeds', async () => {
+  const fetched = []
+  const config = baseConfig()
+  config.__fetchPage = fakeFetcher(fetched)
+  await runResearch({
+    question: 'Node 22 是 LTS 吗？项目该用哪个版本',
+    depth: 'quick',
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.ok(
+    !fetched.some((url) => /api-docs\.deepseek\.com|bigmodel\.cn|volcengine\.com|help\.aliyun\.com/.test(url)),
+    `unexpected seed fetch: ${fetched.join(' | ')}`,
+  )
+})
+
+test('an unreadable official price list becomes a 未解决 line', async () => {
+  const config = baseConfig()
+  config.__fetchPage = async (url) => {
+    if (/api-docs\.deepseek\.com|help\.aliyun\.com/.test(url)) {
+      return { url, finalUrl: url, title: url, domain: new URL(url).hostname, ok: false, reason: 'blocked by the vendor' }
+    }
+    return {
+      url, finalUrl: url, title: `page ${url}`, domain: new URL(url).hostname, links: [], ok: true,
+      text: 'Node 22 entered LTS in October 2025. Node 22 is the active LTS line and keeps receiving security fixes until April 2027.',
+    }
+  }
+  const result = await runResearch({
+    question: 'DeepSeek API 输入价格是多少',
+    depth: 'quick',
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.ok(result.gaps.includes('官方价目页未取到：api-docs.deepseek.com'), result.gaps.join(' | '))
+  assert.ok(result.gaps.includes('官方价目页未取到：help.aliyun.com'), result.gaps.join(' | '))
+  assert.deepEqual(result.stats.officialFetchFailures, ['api-docs.deepseek.com', 'help.aliyun.com'])
+  assert.match(result.brief, /^## 未解决$/m)
+  assert.match(result.brief, /^## 未解决\n- 官方价目页未取到：api-docs\.deepseek\.com/m)
+  assert.match(result.brief, /官方价目页未取到：help\.aliyun\.com/)
+})
