@@ -263,6 +263,17 @@ $env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
 约束：单站最多 3 次候选路径 HTTP（全 404 时正好 3 次），命中 index 再加 1 次展开（合计最多 4 次），请求间隔 ≥400ms，
 失败返回 `{ ok: false, reason }` 不抛异常；不解析 robots.txt（已知限制）。
 
+**sitemap 路径偏好**（0.6.5）：在关键词打分之上加路径先验——路径含 `/reference/`、`/docs/`、`/api/`、`/guide/`、`/guides/`、
+`/manual/`、`/learn/` 记 +3；含 `/blog/`、`/news/`、`/press/`、`/events/`、`/changelog/`、`/tag/` 记 −3。
+`parseSitemapEntries` 额外保留 `<lastmod>`，早于 3 年的条目再 −2（`parseSitemap` 仍返回纯 URL 数组，保持兼容）。
+关键词至少命中一个仍是硬门槛（路径形状本身不算证据），最终得分 ≤0 的条目直接丢弃而不是抓回来占页预算：
+实测 `spring.io` 的 7475 条 `<loc>` 里没有 `/reference/`、`/docs/` 路径，0.6.4 会挑中三条 2015–2018 的 `/blog/` 旧文，
+0.6.5 改为挑出 `guides/gs/spring-boot`、`guides/gs/spring-boot-docker`、`guides/gs/spring-boot-for-azure`。
+
+**旧源降权**（0.6.5）：`looksStale(text)` 识别「已过期 / 不再维护 / 已归档 / deprecated / archived / end of life」等自我声明，
+`rankHits` 对命中的条目 −3，若同时 `publishedAt` 早于 3 年再 −1；`groupEvidence` 之前不做任何过滤，
+因此唯一来源仍会进简报，只有候选数超过页预算时才会被挤出 `selected`。竖向来源的保留槽位也不会再把 stale 条目硬塞回来。
+
 **预算与失败**：sitemap 抓回的页面走同一条 `__fetchPage`，成功一页扣一格页预算（`budget.take('pages')`），
 预算不够就少抓；失败只记 `stats.sourceFailures`（数量）和内部 `{channel, host, reason}`，不中断管线。
 非 docs 类问题不会触发 sitemap；默认策略没有通道，所以也不会慢。
@@ -363,6 +374,21 @@ API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会
 **价格题强制标币种**（0.6.3）：`synthPrompt` 规定价格表必须有一列「币种/单位」；不同币种不得直接比较大小、不得合并排序或得出「更便宜」，「## 未解决」里要写明「币种不同，未换算」；汇率没在证据里出现就不自行折算。断言层也同样处理：不可换算的价格对（元 vs 美元）标 `unitMismatch`，只进 `### 口径差异`，不进 `### 事实冲突`。
 
 ## 更新日志
+
+### 0.6.5（2026-11-15）
+
+- **旧源降权**：`lib/util.js` 新增 `looksStale(text)`（已过期 / 不再维护 / 已归档 / deprecated / archived / end of life 等）；
+  `rankHits` 命中 −3，且 `publishedAt` 早于 3 年再 −1。证据侧不过滤（`groupEvidence` 前不动），只在 selection 阶段排到最后：
+  候选数超过页预算时才被挤出，唯一来源仍会进简报。
+- **竖向保留槽位**不再把 stale 条目硬塞回 `selected`（`lib/pipeline.js` Step 4）。
+- **sitemap 路径偏好**：`pickSitemapUrls` 对 `/reference/`、`/docs/`、`/api/`、`/guide/`、`/guides/`、`/manual/`、`/learn/`
+  路径 +3，对 `/blog/`、`/news/`、`/press/`、`/events/`、`/changelog/`、`/tag/` 路径 −3；得分 ≤0 的条目丢弃。
+- **`<lastmod>` 支持**：新增 `parseSitemapEntries` 返回 `{ loc, lastmod }`（`parseSitemap` 保持纯 URL 数组兼容），
+  `lastmod` 早于 3 年再 −2。
+- 真实网络验证：`crawlSitemap({ baseUrl: 'https://spring.io' })` 由 0.6.4 的三条 2015–2018 `/blog/` 旧文
+  改为 `guides/gs/spring-boot`、`guides/gs/spring-boot-docker`、`guides/gs/spring-boot-for-azure`（spring.io 的 sitemap 里没有
+  `/reference/`、`/docs/` 路径）；`docs.spring.io` 仍三条候选全 404。
+- 测试总数 275。
 
 ### 0.6.4（2026-11-15）
 

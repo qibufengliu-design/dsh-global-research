@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { crawlSitemap, parseSitemap, pickSitemapUrls } from '../lib/sources.js'
+import { crawlSitemap, parseSitemap, parseSitemapEntries, pickSitemapUrls } from '../lib/sources.js'
 
 const URLSET = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -44,6 +44,51 @@ test('pickSitemapUrls ranks path matches, dedupes, and caps at the limit', () =>
   assert.equal(pickSitemapUrls(urls, ['spring', 'boot'], 3).length, 3)
   assert.deepEqual(pickSitemapUrls(urls, ['kubernetes'], 3), [])
   assert.deepEqual(pickSitemapUrls(urls, [], 3), [])
+})
+
+test('parseSitemapEntries keeps <lastmod> while parseSitemap stays a URL array (0.6.5)', () => {
+  const XML = `<urlset>
+  <url><loc>https://nodejs.org/en/learn/node/</loc><lastmod>2025-01-02</lastmod></url>
+  <url><loc>https://nodejs.org/en/blog/node-22</loc><lastmod>2018-05-06T10:00:00Z</lastmod></url>
+  <url><loc>https://nodejs.org/en/about/lts-schedule</loc></url>
+</urlset>`
+  const entries = parseSitemapEntries(XML, 'https://nodejs.org')
+  assert.deepEqual(entries, [
+    { loc: 'https://nodejs.org/en/learn/node/', lastmod: '2025-01-02' },
+    { loc: 'https://nodejs.org/en/blog/node-22', lastmod: '2018-05-06T10:00:00Z' },
+    { loc: 'https://nodejs.org/en/about/lts-schedule' },
+  ])
+  // The historical API is unchanged: a string array, same order, no duplicates.
+  assert.deepEqual(parseSitemap(XML, 'https://nodejs.org'), entries.map((entry) => entry.loc))
+})
+
+test('pickSitemapUrls prefers documentation paths over blog posts (0.6.5)', () => {
+  const urls = [
+    'https://example.dev/blog/spring-boot-release-notes',
+    'https://example.dev/reference/spring-boot',
+  ]
+  // Both match all four keywords, so only the path prior decides the order.
+  const picked = pickSitemapUrls(urls, ['spring', 'boot', 'release', 'notes'], 2)
+  assert.deepEqual(picked, [
+    'https://example.dev/reference/spring-boot',
+    'https://example.dev/blog/spring-boot-release-notes',
+  ])
+  // A weak blog match is dropped entirely instead of spending a page slot.
+  assert.deepEqual(pickSitemapUrls(urls, ['spring', 'boot'], 2), [
+    'https://example.dev/reference/spring-boot',
+  ])
+})
+
+test('pickSitemapUrls demotes entries whose <lastmod> is older than three years (0.6.5)', () => {
+  const entries = [
+    { loc: 'https://example.dev/docs/spring-boot-old', lastmod: '2015-03-01' },
+    { loc: 'https://example.dev/docs/spring-boot-new', lastmod: '2025-06-01' },
+  ]
+  const picked = pickSitemapUrls(entries, ['spring', 'boot'], 2)
+  assert.deepEqual(picked, [
+    'https://example.dev/docs/spring-boot-new',
+    'https://example.dev/docs/spring-boot-old',
+  ])
 })
 
 test('crawlSitemap fetches /sitemap.xml, scores it, and returns absolute page URLs', async () => {

@@ -1039,8 +1039,11 @@ test('a sitemap channel tries its declared bases in order until one answers', as
     'https://react.dev/sitemap-index.xml',
     'https://nodejs.org/sitemap.xml',
   ])
-  assert.equal(result.stats.sitemapPages, 3)
-  assert.ok(fetched.some((url) => url.startsWith('https://nodejs.org/en/')), fetched.join(' | '))
+  assert.equal(result.stats.sitemapPages, 2)
+  // 0.6.5 — the blog post scores below zero once `/blog/` is demoted, so only
+  // the two documentation pages are fetched; the channel itself still works.
+  assert.ok(fetched.includes('https://nodejs.org/en/learn/typescript/introduction'), fetched.join(' | '))
+  assert.ok(!fetched.includes('https://nodejs.org/en/blog/node-22-lts'), fetched.join(' | '))
   assert.equal(result.partial, false)
 })
 
@@ -1124,4 +1127,45 @@ test('heuristicFallback:false disables the per-page fallback (0.6.2)', async () 
   const items = await extractEvidence(pages, { evidence: { heuristicFallback: false } }, { client })
   assert.equal(items.length, 1)
   assert.equal(items[0].url, pages[0].url)
+})
+
+test('a stale hit is pushed out of the selection when candidates are plentiful (0.6.5)', async () => {
+  const fetched = []
+  const stale = 'https://github.com/dead/unmaintained-project'
+  const fresh = [
+    ['https://nodejs.org/en/learn/typescript/introduction', 'TypeScript introduction for Node'],
+    ['https://nodejs.org/en/about/previous-releases', 'Node previous releases calendar'],
+    ['https://nodejs.org/en/docs/latest/api/index.html', 'Node API index'],
+    ['https://nodejs.org/en/docs/latest/api/cli.html', 'Node CLI options'],
+    ['https://nodejs.org/en/learn/modules/introduction', 'Node modules introduction'],
+    ['https://nodejs.org/en/about/releases', 'Node release cadence'],
+    ['https://nodejs.org/en/docs/latest/api/fs.html', 'Node fs module'],
+    ['https://nodejs.org/en/docs/latest/api/process.html', 'Node process module'],
+    ['https://nodejs.org/en/learn/getting-started/introduction', 'Getting started with Node'],
+  ]
+  const engine = {
+    name: 'fake',
+    available: () => true,
+    search: async () => [
+      { url: stale, title: '本项目已过期，不再维护', snippet: 'archived repository', engine: 'fake', rank: 1, publishedAt: '2016-01-01' },
+      ...fresh.map(([url, title], index) => ({
+        url, title, snippet: 'node lts documentation', engine: 'fake', rank: index + 2,
+      })),
+    ],
+  }
+  const config = baseConfig()
+  config.__engines = [engine]
+  config.__fetchPage = fakeFetcher(fetched)
+  const result = await runResearch({
+    question: 'Node 22 是 LTS 吗？项目该用哪个版本',
+    depth: 'standard',
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.equal(result.partial, false)
+  assert.ok(fetched.length > 0, 'the run still reads pages')
+  assert.ok(!fetched.includes(stale), fetched.join(' | '))
+  assert.ok(fetched.includes('https://nodejs.org/en/learn/typescript/introduction'), fetched.join(' | '))
 })

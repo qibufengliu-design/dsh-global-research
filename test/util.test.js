@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   Budget, BudgetExceeded, configureDomainTrust, decodeEntities, dedupeHits, domainTrust,
   evidenceAgeDays, htmlToText, isBlockedDomain, isOfficialDomain, jaccard, jsonSafe, normalizeUrl,
-  parseLooseJson, rankHits, truncate, canonicalKey, extractUrls,
+  parseLooseJson, rankHits, truncate, canonicalKey, extractUrls, looksStale,
 } from '../lib/util.js'
 
 test('vendor documentation and price pages count as official sources (0.6.3)', () => {
@@ -59,6 +59,34 @@ test('dedupeHits merges engines and near-identical titles', () => {
   const kept = dedupeHits(hits)
   assert.equal(kept.length, 2)
   assert.equal(kept[0].engines.size, 3)
+})
+
+test('looksStale reads the wording a source uses about itself (0.6.5)', () => {
+  for (const text of [
+    '本项目已过期，不再维护',
+    'This repository is ARCHIVED',
+    'Deprecated API — no longer maintained',
+    '该库停止维护，已归档',
+  ]) assert.equal(looksStale(text), true, text)
+
+  for (const text of [
+    'Node 22 LTS release notes',
+    'Spring Boot reference documentation',
+    'Pricing update for 2026',
+    '',
+  ]) assert.equal(looksStale(text), false, text)
+})
+
+test('rankHits demotes a source that says it is retired (0.6.5)', () => {
+  const hits = dedupeHits([
+    { url: 'https://github.com/org/old', title: '本项目已过期，不再维护', engine: 'github', publishedAt: '2016-01-01' },
+    { url: 'https://github.com/org/new', title: 'Active project', engine: 'github', publishedAt: '2016-01-01' },
+  ])
+  const ranked = rankHits(hits, { question: 'spring boot configuration' })
+  // Demoted, not dropped: the stale repo is still evidence-eligible when alone.
+  assert.equal(ranked.length, 2)
+  assert.ok(ranked[0].url.endsWith('/org/new'), ranked.map((hit) => hit.url).join(' | '))
+  assert.ok(ranked[1].url.endsWith('/org/old'))
 })
 
 test('rankHits prefers trusted domains and engine consensus', () => {
