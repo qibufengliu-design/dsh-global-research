@@ -104,6 +104,36 @@ test('buildResult appends references and keeps schema shape', () => {
   assert.equal(result.depthUsed, 'quick')
 })
 
+test('references name the pages that were read but never cited', () => {
+  const brief = appendReferences('## 结论\nx', [
+    { id: 'S1', title: 'used', url: 'https://a.com/used', domain: 'a.com' },
+  ], [
+    { url: 'https://a.com/used', domain: 'a.com' },
+    { url: 'https://b.com/one', domain: 'b.com' },
+    { url: 'https://c.com/two', domain: 'c.com' },
+    { url: 'https://b.com/one#frag', domain: 'b.com' },
+  ])
+  assert.match(brief, /- 另有 2 个页面被读取但未采用（b\.com、c\.com）$/)
+})
+
+test('buildResult reports unused pages only when some page was left out', () => {
+  const clusters = [cluster('x', ['https://a.com/used'])]
+  const sources = assignSourceIds(clusters)
+  const allCited = buildResult({
+    brief: '## 结论\nx [S1]', sources, confidence: 'low', gaps: [], partial: false, depth: 'quick',
+    pages: [{ url: 'https://a.com/used', domain: 'a.com' }],
+  })
+  assert.doesNotMatch(allCited.brief, /未采用/)
+  const withUnused = buildResult({
+    brief: '## 结论\nx [S1]', sources, confidence: 'low', gaps: [], partial: false, depth: 'quick',
+    pages: [
+      { url: 'https://a.com/used', domain: 'a.com' },
+      { url: 'https://d.com/skipped', domain: 'd.com' },
+    ],
+  })
+  assert.match(withUnused.brief, /- 另有 1 个页面被读取但未采用（d\.com）$/)
+})
+
 test('buildResult appends one run-stats line after 参考 and stays idempotent', () => {
   const clusters = [cluster('x', ['https://a.com'])]
   const sources = assignSourceIds(clusters)

@@ -5,7 +5,7 @@ import {
   resolveStrategy,
 } from '../lib/strategy.js'
 import { QUESTION_KINDS, STRATEGY_DEFAULTS } from '../lib/strategies.js'
-import { DEPTH_PROFILES, buildQueries, resolveDepth } from '../lib/pipeline.js'
+import { DEPTH_PROFILES, buildQueries, resolveDepth, runResearch } from '../lib/pipeline.js'
 
 /*
  * Frozen copies of the six predicates this module replaces. They are the
@@ -202,4 +202,114 @@ test('classify reports the signals and keywords that drove the kind', () => {
   assert.ok(classify({ question: '选哪个', focus: ['成本', '生态'] }).signals.includes('focus:>=2'))
   // An explicit mode nudges the kind without being required.
   assert.equal(classify({ question: 'React 还是 Vue', mode: 'compare' }).questionKind, 'tech-selection')
+})
+
+/* ------------------------------------------------------------------ *
+ * The wiring test: runResearch() has to pass the resolved pack into
+ * resolveDepth(). The unit test above proves applyDepthBias() works; this
+ * one proves the pipeline actually calls it (PR3 regression guard).
+ * ------------------------------------------------------------------ */
+
+function fakeLlm(responder) {
+  return {
+    stream(options) {
+      const user = options.messages?.[0]?.content?.[0]?.text ?? ''
+      const text = responder({ ...options, user })
+      return (async function* emit() {
+        yield { type: 'text-delta', text }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      })()
+    },
+  }
+}
+
+const FAKE_TITLES = ['Node LTS release notes', 'Node LTS docs', 'Node LTS community']
+
+function fakeEngine(urls) {
+  return {
+    name: 'fake',
+    available: () => true,
+    search: async () => urls.map((url, index) => ({
+      url, title: FAKE_TITLES[index % FAKE_TITLES.length], snippet: 'snippet', engine: 'fake', rank: index + 1,
+    })),
+  }
+}
+
+function fakeFetcher(url) {
+  return {
+    url, finalUrl: url, title: `page ${url}`, domain: new URL(url).hostname, ok: true,
+    text: `Node 22 entered LTS in October 2025. Node 22 is the active LTS line and keeps receiving security fixes until April 2027; after that it moves to maintenance. A team picking a runtime for a new backend service should weigh that remaining window against its upgrade cadence. Source: ${url}`,
+  }
+}
+
+function fakeConfig() {
+  return {
+    maxDeepPerSession: 3,
+    __engines: [fakeEngine(['https://nodejs.org/1', 'https://github.com/x/y', 'https://a.com/3'])],
+    __fetchPage: async (url) => fakeFetcher(url),
+  }
+}
+
+function responders() {
+  return {
+    analysis: JSON.stringify({
+      subQuestions: [{ q: 'Node LTS 版本有哪些？', why: '确定基线', evidence: 'docs' }],
+      constraints: ['需要长期支持'],
+      criteria: ['稳定性'],
+      language: 'zh',
+    }),
+    evidence: JSON.stringify([
+      { claim: 'Node 22 是当前 LTS 版本', quote: 'Node 22 entered LTS in October 2025.', source: 0, type: 'docs', stance: 'support' },
+      { claim: 'Node 22 是当前 LTS 版本', quote: 'Node 22 is the active LTS line.', source: 1, type: 'docs', stance: 'support' },
+    ]),
+    synth: [
+      '## 结论',
+      'Node 22 是当前 LTS [S1][S2]。',
+      '',
+      '## 依据',
+      '- 官方发布说明确认 [S1]',
+      '',
+      '## 方案对比',
+      '不适用',
+      '',
+      '## 坑与风险',
+      '未发现',
+      '',
+      '## 置信度',
+      'high',
+      '',
+      '## 未解决',
+      '无',
+    ].join('\n'),
+  }
+}
+
+function defaultResponder(options) {
+  const prompt = options.user ?? ''
+  const reply = responders()
+  if (prompt.includes('<untrusted>')) return reply.evidence
+  if (prompt.includes('拆解')) return reply.analysis
+  if (prompt.includes('缺口')) return JSON.stringify({ queries: [], reason: '无' })
+  if (prompt.includes('研究简报')) return reply.synth
+  return '{}'
+}
+
+test('runResearch applies a pack depth bias to an auto-derived quick run, then clamps it', async () => {
+  const strategy = resolveStrategy({ questionKind: 'tech-selection', depth: 'auto' })
+  // Same pack with a bias far past the ceiling: the pack's ceiling must win.
+  const clamped = { ...strategy, depth: { ...strategy.depth, bias: 5, ceiling: 'standard' } }
+  const run = (extra) => runResearch({
+    question: 'Node 22 是什么',
+    config: fakeConfig(),
+    llm: fakeLlm(defaultResponder),
+    selection: { provider: 'test', model: 'test-model' },
+    logger: () => {},
+    ...extra,
+  })
+  const plain = await run()
+  assert.equal(plain.depthUsed, 'quick')
+  const biased = await run({ strategy })
+  assert.equal(biased.depthUsed, 'standard')
+  const capped = await run({ strategy: clamped })
+  assert.equal(capped.depthUsed, 'standard')
 })
