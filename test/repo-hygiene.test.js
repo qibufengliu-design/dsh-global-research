@@ -5,9 +5,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  checkDocumentedCommands,
   checkJsonBlocks,
   checkRepository,
   checkToolParams,
+  documentedCommands,
   documentedParams,
   toolParamNames,
 } from '../scripts/check-docs.mjs'
@@ -245,6 +247,48 @@ test('checkJsonBlocks rejects fenced JSON examples that do not parse', () => {
     checkJsonBlocks(dir, { fail: (line) => failures.push(line), pass: () => {} })
     assert.equal(failures.length, 1, failures.join('\n'))
     assert.match(failures[0], /README\.md 第 1 个 `json` 代码块无法解析/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('documentedCommands finds the scripts a doc promises readers can run', () => {
+  const markdown = [
+    '```bash',
+    'node scripts/test-all.mjs',
+    'node scripts/check-docs.mjs',
+    'npm run test',
+    'node scripts/test-all.mjs',
+    '```',
+    '',
+  ].join('\n')
+  assert.deepEqual(documentedCommands(markdown), {
+    files: ['scripts/check-docs.mjs', 'scripts/test-all.mjs'],
+    scripts: ['test'],
+  })
+  assert.deepEqual(documentedCommands('没有命令'), { files: [], scripts: [] })
+})
+
+test('checkDocumentedCommands flags commands that no longer exist', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-commands-'))
+  try {
+    mkdirSync(join(dir, 'scripts'))
+    writeFileSync(join(dir, 'scripts/test-all.mjs'), '// fixture\n')
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ version: '1.2.3', scripts: { test: 'x' } }))
+    writeFileSync(
+      join(dir, 'README.md'),
+      '```bash\nnode scripts/test-all.mjs\nnode scripts/removed-script.mjs\nnpm run e2e\n```\n'
+    )
+    const failures = []
+    checkDocumentedCommands(dir, { fail: (line) => failures.push(line), pass: () => {} })
+    assert.ok(
+      failures.some((line) => line.includes('文档里写到的脚本不存在：scripts/removed-script.mjs')),
+      failures.join('\n')
+    )
+    assert.ok(
+      failures.some((line) => line.includes('文档里写到的 npm script 不存在：e2e')),
+      failures.join('\n')
+    )
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

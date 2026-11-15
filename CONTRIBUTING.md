@@ -20,7 +20,7 @@
 git clone https://github.com/qibufengliu-design/dsh-global-research.git
 cd dsh-global-research
 node scripts/test-all.mjs      # 全部测试文件应全绿（总数以输出为准）
-node scripts/check-docs.mjs    # 仓库整洁性：必需文件、相对链接、CHANGELOG、零依赖、Issue 表单、README 参数表与工具参数一致、JSON 示例可解析
+node scripts/check-docs.mjs    # 仓库整洁性：必需文件、相对链接、CHANGELOG、零依赖、Issue 表单、README 参数表与工具参数一致、JSON 示例可解析、文档里的脚本命令真实存在
 node scripts/check-release.mjs # 发布一致性：版本号、CHANGELOG 小节（非空/不重复/有序）、README 预算表与代码一致
 ```
 

@@ -4,14 +4,15 @@
  *
  *   node scripts/check-docs.mjs
  *
- * 检查七件事：
+ * 检查八件事：
  *   1. 企业级仓库需要的文件都在（README / CHANGELOG / 社区文件 / docs / 模板）；
  *   2. README、docs/、CONTRIBUTING、SECURITY、HANDOFF 里的相对链接都能解析；
  *   3. CHANGELOG 有 [Unreleased] 段，且有与 package.json 版本一致的条目；
  *   4. package.json 元数据齐全、运行时依赖为空；
  *   5. Issue 表单（.github/ISSUE_TEMPLATE/*.yml）的必填键与 body 类型合法，否则 GitHub 会静默不显示模板；
  *   6. README 的参数表与 index.js 里 research 工具的 parameters 一致（新参数不写进 README 就是文档漂移）；
- *   7. Markdown 里标成 ```json 的示例都能解析（示例是给人复制去跑的，语法错等于没写）。
+ *   7. Markdown 里标成 ```json 的示例都能解析（示例是给人复制去跑的，语法错等于没写）；
+ *   8. 文档里写到的 `node scripts/*.mjs` 与 `npm run <script>` 都真实存在（脚本改名后文档没跟，用户照着跑就报错）。
  *
  * 任何一项不通过就以非零码退出并列出具体文件，方便在 CI 里一眼看出哪里不整齐。
  * `checkRepository()` 同时被 test/repo-hygiene.test.js 直接调用，测试不落盘、不起子进程。
@@ -228,6 +229,60 @@ function checkIssueTemplates(root, report) {
 }
 
 /**
+ * 从 Markdown 里取出文档承诺可跑的 `node scripts/*.mjs` 与 `npm run <script>`。
+ * 脚本改名/删掉之后文档最容易忘了跟，用户照着复制就报错。
+ * @param {string} markdown
+ * @returns {{ files: string[], scripts: string[] }}
+ */
+export function documentedCommands(markdown) {
+  const files = new Set()
+  const scripts = new Set()
+  for (const match of markdown.matchAll(/node\s+(scripts\/[\w.-]+\.mjs)/g)) files.add(match[1])
+  for (const match of markdown.matchAll(/npm\s+run\s+([\w:-]+)/g)) scripts.add(match[1])
+  return { files: [...files].sort(), scripts: [...scripts].sort() }
+}
+
+/**
+ * 文档里出现的脚本命令必须真的存在：`node scripts/x.mjs` 指向的文件在仓库里、
+ * `npm run x` 在 package.json 的 scripts 里有。
+ * @param {string} root
+ * @param {{ fail: (m: string) => void, pass: (m: string) => void }} report
+ */
+export function checkDocumentedCommands(root, report) {
+  const problems = []
+  const missingFiles = new Set()
+  const missingScripts = new Set()
+  let total = 0
+
+  let availableScripts = new Set()
+  if (existsSync(join(root, 'package.json'))) {
+    try {
+      availableScripts = new Set(Object.keys(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts ?? {}))
+    } catch {
+      /* package.json 解析失败已在第 4 项报过 */
+    }
+  }
+
+  for (const file of LINK_SCAN) {
+    if (!existsSync(join(root, file))) continue
+    const { files, scripts } = documentedCommands(readFileSync(join(root, file), 'utf8'))
+    for (const target of files) {
+      total += 1
+      if (!existsSync(join(root, target))) missingFiles.add(`${target}（${file}）`)
+    }
+    for (const name of scripts) {
+      total += 1
+      if (availableScripts.size && !availableScripts.has(name)) missingScripts.add(`${name}（${file}）`)
+    }
+  }
+
+  for (const target of missingFiles) problems.push(`文档里写到的脚本不存在：${target}`)
+  for (const name of missingScripts) problems.push(`文档里写到的 npm script 不存在：${name}`)
+  for (const problem of problems) report.fail(problem)
+  if (total && !problems.length) report.pass(`文档里写到的脚本命令 ${total} 条都存在`)
+}
+
+/**
  * @param {string} [root] 仓库根目录
  * @returns {{ passes: string[], failures: string[] }}
  */
@@ -245,6 +300,7 @@ export function checkRepository(root = DEFAULT_ROOT) {
 
   // 2. Markdown 相对链接 ----------------------------------------------------
   let linkTotal = 0
+  let linkBroken = 0
   for (const file of LINK_SCAN) {
     if (!existsSync(join(root, file))) continue
     const body = read(file)
@@ -261,11 +317,12 @@ export function checkRepository(root = DEFAULT_ROOT) {
         ? join(root, pathPart)
         : resolve(dirname(join(root, file)), pathPart)
       if (!existsSync(resolved)) {
+        linkBroken += 1
         fail(`${file} 的链接指向不存在的路径：${target}（解析为 ${relative(root, resolved)}）`)
       }
     }
   }
-  if (linkTotal && !failures.length) pass(`Markdown 相对链接 ${linkTotal} 条全部可解析`)
+  if (linkTotal && !linkBroken) pass(`Markdown 相对链接 ${linkTotal} 条全部可解析`)
 
   // 3. CHANGELOG ------------------------------------------------------------
   let version = ''
@@ -339,6 +396,9 @@ export function checkRepository(root = DEFAULT_ROOT) {
 
   // 7. JSON 示例可解析 --------------------------------------------------------
   checkJsonBlocks(root, { fail, pass })
+
+  // 8. 文档里的脚本命令真实存在 ----------------------------------------------
+  checkDocumentedCommands(root, { fail, pass })
 
   return { passes, failures }
 }
