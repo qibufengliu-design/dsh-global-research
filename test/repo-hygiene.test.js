@@ -1,10 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkRepository } from '../scripts/check-docs.mjs'
+import {
+  checkRelease,
+  parseDepthProfiles,
+  parseReadmeBudgets,
+  staleTestCounts,
+} from '../scripts/check-release.mjs'
 import { extractReleaseNotes } from '../scripts/release-notes.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -50,6 +56,77 @@ test('checkRepository reports missing files instead of throwing', () => {
     const { failures } = checkRepository(dir)
     assert.ok(failures.some((line) => line.includes('缺少必需文件')), failures.join('\n'))
     assert.ok(failures.some((line) => line.includes('CHANGELOG.md')), failures.join('\n'))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('parseDepthProfiles reads the real profile numbers', () => {
+  const source = [
+    'export const DEPTH_PROFILES = {',
+    '  quick: { queries: 2, pages: 3, llmCalls: 6, gapRounds: 0, wallMs: 120000, batch: 3 },',
+    '  standard: { queries: 6, pages: 12, llmCalls: 14, gapRounds: 1, wallMs: 240000 },',
+    '  deep: { queries: 16, pages: 30, llmCalls: 28, gapRounds: 1, wallMs: 360000 },',
+    '}',
+    '',
+  ].join('\n')
+  const profiles = parseDepthProfiles(source)
+  assert.equal(profiles.quick.wallMs, 120000)
+  assert.equal(profiles.standard.pages, 12)
+  assert.equal(profiles.deep.llmCalls, 28)
+  assert.equal(parseDepthProfiles('export const OTHER = {}'), null)
+})
+
+test('parseReadmeBudgets converts the wall-clock column to milliseconds', () => {
+  const markdown = [
+    '| depth | queries | pages | LLM 轮 | 补搜轮 | 墙钟 |',
+    '|---|---|---|---|---|---|',
+    '| quick | 2 | 3 | 6 | 0 | 120s |',
+    '| standard | 6 | 12 | 14 | 1 | 240s |',
+    '| deep | 16 | 30 | 28 | 1 | 360s |',
+    '',
+  ].join('\n')
+  const budgets = parseReadmeBudgets(markdown)
+  assert.deepEqual(budgets.quick, { queries: 2, pages: 3, llmCalls: 6, gapRounds: 0, wallMs: 120000 })
+  assert.equal(budgets.deep.wallMs, 360000)
+  assert.equal(parseReadmeBudgets('没有表格'), null)
+})
+
+test('staleTestCounts flags hardcoded example counts', () => {
+  assert.deepEqual(staleTestCounts('逐文件跑全部 352 例测试'), [{ count: 352, snippet: '352 例' }])
+  assert.deepEqual(staleTestCounts('逐文件跑全部测试'), [])
+  assert.deepEqual(staleTestCounts('0.9.5 起 19 个文件'), [])
+})
+
+test('checkRelease keeps version, CHANGELOG, budgets and doc counts in sync', () => {
+  const { passes, failures, notes } = checkRelease(root)
+  assert.deepEqual(failures, [])
+  assert.ok(passes.length >= 4, `expected several checks to run, got ${passes.length}`)
+  assert.ok(Array.isArray(notes))
+})
+
+test('checkRelease fails when the README budget table drifts from the code', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-release-'))
+  try {
+    mkdirSync(join(dir, 'lib'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ version: '9.9.9', name: 'fixture' }))
+    writeFileSync(
+      join(dir, 'CHANGELOG.md'),
+      '# Changelog\n\n## [Unreleased]\n\n## [9.9.9] - 2026-01-01\n\n- ship it\n'
+    )
+    writeFileSync(
+      join(dir, 'lib/pipeline.js'),
+      'export const DEPTH_PROFILES = {\n  quick: { wallMs: 120000 },\n  standard: { wallMs: 240000 },\n  deep: { wallMs: 360000 },\n}\n'
+    )
+    writeFileSync(
+      join(dir, 'README.md'),
+      '| depth | queries | pages | LLM 轮 | 补搜轮 | 墙钟 |\n|---|---|---|---|---|---|\n| quick | 2 | 3 | 6 | 0 | 90s |\n| standard | 6 | 12 | 14 | 1 | 180s |\n| deep | 16 | 30 | 28 | 1 | 300s |\n'
+    )
+    const { failures } = checkRelease(dir)
+    assert.ok(
+      failures.some((line) => line.includes('预算不一致（quick.wallMs）')),
+      failures.join('\n')
+    )
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

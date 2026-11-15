@@ -45,6 +45,7 @@ const REQUIRED_FILES = [
   'docs/screenshots/01-card.png',
   'scripts/test-all.mjs',
   'scripts/check-docs.mjs',
+  'scripts/check-release.mjs',
   'scripts/release-notes.mjs',
 ]
 

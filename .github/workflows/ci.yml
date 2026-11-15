@@ -57,3 +57,6 @@ jobs:
 
       - name: Repository hygiene (files, links, CHANGELOG, package metadata)
         run: node scripts/check-docs.mjs
+
+      - name: Release consistency (version, CHANGELOG, budgets, doc counts)
+        run: node scripts/check-release.mjs
