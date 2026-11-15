@@ -11,7 +11,8 @@ test('pickVerticals picks code sources for library questions', () => {
 
 test('pickVerticals picks arXiv for research questions', () => {
   const picked = pickVerticals({ question: 'which retrieval augmented generation benchmark is standard in 2026?' })
-  assert.equal(picked[0], 'arxiv')
+  assert.ok(picked.includes('arxiv'))
+  assert.ok(picked.includes('scholar'))
   assert.deepEqual(picked.length <= 2, true)
 })
 
