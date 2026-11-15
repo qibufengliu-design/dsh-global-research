@@ -20,7 +20,7 @@
 git clone https://github.com/qibufengliu-design/dsh-global-research.git
 cd dsh-global-research
 node scripts/test-all.mjs      # 全部测试文件应全绿（总数以输出为准）
-node scripts/check-docs.mjs    # 仓库整洁性：必需文件、相对链接、CHANGELOG、零依赖、Issue 表单结构
+node scripts/check-docs.mjs    # 仓库整洁性：必需文件、相对链接、CHANGELOG、零依赖、Issue 表单、README 参数表与工具参数一致、JSON 示例可解析
 node scripts/check-release.mjs # 发布一致性：版本号、CHANGELOG 小节（非空/不重复/有序）、README 预算表与代码一致
 ```
 
@@ -56,7 +56,7 @@ git config user.email "qibufengliu-design@users.noreply.github.com"
 ## PR 检查表
 
 - [ ] `node scripts/test-all.mjs` 全绿
-- [ ] `node scripts/check-docs.mjs` 通过（相对链接、必需文件、CHANGELOG 条目、零依赖、Issue 表单结构）
+- [ ] `node scripts/check-docs.mjs` 通过（相对链接、必需文件、CHANGELOG 条目、零依赖、Issue 表单、README 参数表与 `index.js` 的参数一致、JSON 示例可解析）
 - [ ] `node scripts/check-release.mjs` 通过（版本号与 CHANGELOG 小节、小节非空且不重复、README 预算表与 `DEPTH_PROFILES` 一致）
 - [ ] 新增行为有对应测试；修 bug 先补一条会失败的测试
 - [ ] `dependencies` / `devDependencies` 仍为空

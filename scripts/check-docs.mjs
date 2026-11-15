@@ -4,12 +4,14 @@
  *
  *   node scripts/check-docs.mjs
  *
- * 检查五件事：
+ * 检查七件事：
  *   1. 企业级仓库需要的文件都在（README / CHANGELOG / 社区文件 / docs / 模板）；
  *   2. README、docs/、CONTRIBUTING、SECURITY、HANDOFF 里的相对链接都能解析；
  *   3. CHANGELOG 有 [Unreleased] 段，且有与 package.json 版本一致的条目；
  *   4. package.json 元数据齐全、运行时依赖为空；
- *   5. Issue 表单（.github/ISSUE_TEMPLATE/*.yml）的必填键与 body 类型合法，否则 GitHub 会静默不显示模板。
+ *   5. Issue 表单（.github/ISSUE_TEMPLATE/*.yml）的必填键与 body 类型合法，否则 GitHub 会静默不显示模板；
+ *   6. README 的参数表与 index.js 里 research 工具的 parameters 一致（新参数不写进 README 就是文档漂移）；
+ *   7. Markdown 里标成 ```json 的示例都能解析（示例是给人复制去跑的，语法错等于没写）。
  *
  * 任何一项不通过就以非零码退出并列出具体文件，方便在 CI 里一眼看出哪里不整齐。
  * `checkRepository()` 同时被 test/repo-hygiene.test.js 直接调用，测试不落盘、不起子进程。
@@ -66,6 +68,118 @@ const LINK_SCAN = [
 const LINK_PATTERN = /!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g
 
 const BODY_TYPES = new Set(['markdown', 'input', 'textarea', 'dropdown', 'checkboxes'])
+
+/**
+ * 从 index.js 里取出 research 工具 `parameters: { … }` 的顶层键名。
+ * 只做花括号配对 + 行首键名识别，不解析 JS —— 参数定义是字面量对象，够用且零依赖。
+ * @param {string} source index.js 源码
+ * @returns {string[]}
+ */
+export function toolParamNames(source) {
+  const marker = /\bparameters:\s*\{/.exec(source)
+  if (!marker) return []
+  const open = source.indexOf('{', marker.index)
+  let depth = 0
+  let end = source.length
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1
+    else if (source[i] === '}') {
+      depth -= 1
+      if (depth === 0) {
+        end = i
+        break
+      }
+    }
+  }
+  const block = source.slice(open + 1, end)
+  const names = []
+  let level = 0
+  for (const line of block.split('\n')) {
+    if (level === 0) {
+      const key = /^\s*([A-Za-z_$][\w$]*)\s*:/.exec(line)
+      if (key) names.push(key[1])
+    }
+    for (const ch of line) {
+      if (ch === '{') level += 1
+      else if (ch === '}') level -= 1
+    }
+  }
+  return [...new Set(names)]
+}
+
+/**
+ * 从 README 的「## 参数」表里取出参数名（表格行首列的 `code` 名）。
+ * @param {string} markdown
+ * @returns {string[]}
+ */
+export function documentedParams(markdown) {
+  const lines = markdown.split('\n')
+  const start = lines.findIndex((line) => /^##\s*参数\s*$/.test(line))
+  if (start < 0) return []
+  const names = []
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^##\s/.test(lines[i])) break
+    const row = /^\|\s*`([A-Za-z][\w]*)`\s*\|/.exec(lines[i])
+    if (row) names.push(row[1])
+  }
+  return names
+}
+
+/**
+ * README 参数表必须覆盖工具的全部参数，且不能列出工具没有的参数。
+ * 这是最容易被忽略的文档漂移：新参数只在代码里加、README 没跟上，用户根本不知道有这个开关。
+ * @param {string} root
+ * @param {{ fail: (m: string) => void, pass: (m: string) => void }} report
+ */
+export function checkToolParams(root, report) {
+  const indexPath = join(root, 'index.js')
+  const readmePath = join(root, 'README.md')
+  if (!existsSync(indexPath) || !existsSync(readmePath)) return
+  const names = toolParamNames(readFileSync(indexPath, 'utf8'))
+  if (!names.length) {
+    report.fail('index.js 里找不到 research 工具的 `parameters: { … }` 定义')
+    return
+  }
+  const documented = documentedParams(readFileSync(readmePath, 'utf8'))
+  if (!documented.length) {
+    report.fail('README.md 里找不到「## 参数」表（工具参数必须在 README 里列全）')
+    return
+  }
+  const missing = names.filter((name) => !documented.includes(name))
+  const extra = documented.filter((name) => !names.includes(name))
+  if (missing.length) report.fail(`README 参数表缺少工具参数：${missing.join('、')}`)
+  if (extra.length) report.fail(`README 参数表列出了工具没有的参数：${extra.join('、')}`)
+  if (!missing.length && !extra.length) report.pass(`README 参数表与工具参数一致（${names.length} 个）`)
+}
+
+/**
+ * Markdown 里标成 ```json 的代码块必须能 JSON.parse —— 示例是给人复制去跑的。
+ * @param {string} root
+ * @param {{ fail: (m: string) => void, pass: (m: string) => void }} report
+ */
+export function checkJsonBlocks(root, report) {
+  let total = 0
+  const problems = []
+  for (const file of LINK_SCAN) {
+    if (!existsSync(join(root, file))) continue
+    const body = readFileSync(join(root, file), 'utf8')
+    const fence = '```'
+    const pattern = new RegExp(`${fence}json\\s*\\n([\\s\\S]*?)${fence}`, 'g')
+    let match
+    let index = 0
+    while ((match = pattern.exec(body)) !== null) {
+      index += 1
+      total += 1
+      try {
+        JSON.parse(match[1])
+      } catch (error) {
+        problems.push(`${file} 第 ${index} 个 \`json\` 代码块无法解析：${error.message}`)
+      }
+    }
+  }
+  for (const problem of problems) report.fail(problem)
+  if (total && !problems.length) report.pass(`Markdown 里的 JSON 示例 ${total} 段都能解析`)
+}
 
 /**
  * Issue 模板是 YAML，但没有引依赖就不做完整解析：只校验 GitHub Issue Forms 必需的
@@ -219,6 +333,12 @@ export function checkRepository(root = DEFAULT_ROOT) {
 
   // 5. Issue 模板 ------------------------------------------------------------
   checkIssueTemplates(root, { fail, pass })
+
+  // 6. README 参数表 ↔ 工具参数 ------------------------------------------------
+  checkToolParams(root, { fail, pass })
+
+  // 7. JSON 示例可解析 --------------------------------------------------------
+  checkJsonBlocks(root, { fail, pass })
 
   return { passes, failures }
 }

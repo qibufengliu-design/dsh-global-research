@@ -4,7 +4,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { checkRepository } from '../scripts/check-docs.mjs'
+import {
+  checkJsonBlocks,
+  checkRepository,
+  checkToolParams,
+  documentedParams,
+  toolParamNames,
+} from '../scripts/check-docs.mjs'
 import {
   checkRelease,
   parseDepthProfiles,
@@ -157,6 +163,88 @@ test('checkRepository rejects broken issue forms before GitHub hides them', () =
     assert.match(joined, /ISSUE_TEMPLATE\/bug_report\.yml 缺少必填顶层键 description/, joined)
     assert.match(joined, /未知的 body 类型：textbox/, joined)
     assert.match(joined, /id 重复：detail/, joined)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('toolParamNames reads the research tool parameters in order', () => {
+  const source = [
+    'ctx.tools.register({',
+    "  name: 'research',",
+    '  parameters: {',
+    "    question: { type: 'string', required: true },",
+    "    depth: { type: 'string', enum: ['auto'] },",
+    "    text: { type: 'string', description: 'nested { brace }' },",
+    '  },',
+    "  output: { schema: OUTPUT_SCHEMA, render: () => [] },",
+    '})',
+    '',
+  ].join('\n')
+  assert.deepEqual(toolParamNames(source), ['question', 'depth', 'text'])
+  assert.deepEqual(toolParamNames('const x = 1'), [])
+})
+
+test('documentedParams reads the README parameter table only', () => {
+  const markdown = [
+    '## 参数',
+    '',
+    '| 参数 | 必填 | 说明 |',
+    '|---|---|---|',
+    '| `question` | 是 | 问题 |',
+    '| `text` | 否 | 资料 |',
+    '',
+    '## 预算',
+    '',
+    '| `notAParam` | x | y |',
+    '',
+  ].join('\n')
+  assert.deepEqual(documentedParams(markdown), ['question', 'text'])
+  assert.deepEqual(documentedParams('没有参数表'), [])
+})
+
+test('checkToolParams catches parameters that never made it into the README', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-params-'))
+  try {
+    writeFileSync(
+      join(dir, 'index.js'),
+      [
+        'ctx.tools.register({',
+        '  parameters: {',
+        "    question: { type: 'string' },",
+        "    text: { type: 'string' },",
+        '  },',
+        '})',
+        '',
+      ].join('\n')
+    )
+    writeFileSync(
+      join(dir, 'README.md'),
+      '## 参数\n\n| 参数 | 必填 | 说明 |\n|---|---|---|\n| `question` | 是 | 问题 |\n| `ghost` | 否 | 工具里没有 |\n'
+    )
+    const failures = []
+    checkToolParams(dir, { fail: (line) => failures.push(line), pass: () => {} })
+    assert.ok(
+      failures.some((line) => line.includes('缺少工具参数：text')),
+      failures.join('\n')
+    )
+    assert.ok(
+      failures.some((line) => line.includes('列出了工具没有的参数：ghost')),
+      failures.join('\n')
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('checkJsonBlocks rejects fenced JSON examples that do not parse', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-json-'))
+  try {
+    writeFileSync(join(dir, 'README.md'), '```json\n{ "tool": "install_bundle", }\n```\n')
+    const failures = []
+    checkJsonBlocks(dir, { fail: (line) => failures.push(line), pass: () => {} })
+    assert.equal(failures.length, 1, failures.join('\n'))
+    assert.match(failures[0], /README\.md 第 1 个 `json` 代码块无法解析/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
