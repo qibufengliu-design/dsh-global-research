@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  appendReferences, assignSourceIds, buildResult, computeConfidence,
+  appendReferences, appendStats, assignSourceIds, buildResult, computeConfidence,
   ensureSections, fallbackBrief, validateCitations,
 } from '../lib/brief.js'
 import { autoDepth, buildQueries, groupEvidence, resolveDepth } from '../lib/pipeline.js'
@@ -72,6 +72,40 @@ test('buildResult appends references and keeps schema shape', () => {
   assert.match(result.brief, /## 参考/)
   assert.equal(result.sources.length, 1)
   assert.equal(result.depthUsed, 'quick')
+})
+
+test('buildResult appends one run-stats line after 参考 and stays idempotent', () => {
+  const clusters = [cluster('x', ['https://a.com'])]
+  const sources = assignSourceIds(clusters)
+  const stats = { queries: 6, pagesFetched: 9, clusters: 14, elapsedMs: 73000 }
+  const first = buildResult({
+    brief: '## 结论\nx [S1]', sources, confidence: 'low', gaps: [], partial: false,
+    depth: 'standard', stats,
+  })
+  assert.match(first.brief, /## 参考[\s\S]*> 本次检索：6 个查询 · 9 个页面 · 14 条证据 · 73 秒（标准档）$/)
+  assert.equal(first.brief.match(/本次检索：/g).length, 1)
+  // Rendering the same result again must not add a second line.
+  const again = buildResult({
+    brief: first.brief, sources: [], confidence: 'low', gaps: [], partial: false,
+    depth: 'standard', stats,
+  })
+  assert.equal(again.brief.match(/本次检索：/g).length, 1)
+})
+
+test('buildResult does not throw without stats and appends nothing', () => {
+  const result = buildResult({
+    brief: '## 结论\nx', sources: [], confidence: 'low', gaps: [], partial: true, depth: 'quick',
+  })
+  assert.doesNotMatch(result.brief, /本次检索/)
+})
+
+test('appendStats maps depth labels and skips empty runs', () => {
+  assert.match(
+    appendStats('x', { queries: 1, pagesFetched: 2, clusters: 3, elapsedMs: 1500 }, 'quick'),
+    /1 个查询 · 2 个页面 · 3 条证据 · 2 秒（快速档）$/,
+  )
+  assert.equal(appendStats('x', undefined), 'x')
+  assert.equal(appendStats('x', { queries: 0, pagesFetched: 0, clusters: 0, elapsedMs: 0 }), 'x')
 })
 
 test('autoDepth picks deep for comparison, quick for simple facts', () => {

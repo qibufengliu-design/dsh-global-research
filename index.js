@@ -83,6 +83,7 @@ const OUTPUT_SCHEMA = {
       type: 'object',
       properties: {
         queries: { type: 'number' }, pagesFetched: { type: 'number' },
+        clusters: { type: 'number' },
         llmRounds: { type: 'number' }, elapsedMs: { type: 'number' },
         cached: { type: 'boolean' },
         cachedAgeMinutes: { type: 'number' },
@@ -240,7 +241,9 @@ export function apply(ctx, rawConfig = {}) {
       if (cache && key && !result.partial) cache.set(key, JSON.parse(JSON.stringify(result)))
       if (config.debugStats) {
         const stats = result.stats ?? {}
-        result.brief += `\n\n---\n检索统计：引擎 ${(stats.engines ?? []).join(',') || '无'} · 垂直源 ${(stats.verticals ?? []).join(',') || '无'}（${stats.verticalHits ?? 0} 条${Object.keys(stats.verticalsByEngine ?? {}).length ? '：' + Object.entries(stats.verticalsByEngine).map(([name, count]) => `${name} ${count}`).join('，') : ''}）· query ${stats.queries ?? 0} · 抓取 ${stats.pagesFetched ?? 0} 页 · 官方直取 ${stats.directUrls ?? 0}${(stats.refillQueries ?? []).length ? ` · 回补 ${stats.refillQueries.length} 条（${stats.refillQueries.map((query) => query.slice(0, 40)).join(' | ')}）` : ''} · 域名 ${(stats.hosts ?? []).slice(0, 8).join(',') || '无'} · 耗时 ${Math.round((stats.elapsedMs ?? 0) / 1000)}s`
+        // Query/page/evidence/second counts already live in the brief's fixed
+        // 「本次检索」 line; keep this row for diagnostics that line omits.
+        result.brief += `\n\n---\n调试统计：引擎 ${(stats.engines ?? []).join(',') || '无'} · 垂直源 ${(stats.verticals ?? []).join(',') || '无'}（${stats.verticalHits ?? 0} 条${Object.keys(stats.verticalsByEngine ?? {}).length ? '：' + Object.entries(stats.verticalsByEngine).map(([name, count]) => `${name} ${count}`).join('，') : ''}）· 官方直取 ${stats.directUrls ?? 0}${(stats.refillQueries ?? []).length ? ` · 回补 ${stats.refillQueries.length} 条（${stats.refillQueries.map((query) => query.slice(0, 40)).join(' | ')}）` : ''} · 域名 ${(stats.hosts ?? []).slice(0, 8).join(',') || '无'}`
       }
       return result
     },
