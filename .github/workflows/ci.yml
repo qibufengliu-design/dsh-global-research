@@ -60,3 +60,23 @@ jobs:
 
       - name: Release consistency (version, CHANGELOG, budgets, doc counts)
         run: node scripts/check-release.mjs
+
+  windows:
+    name: windows smoke (node 22)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Repository hygiene (paths, links, files)
+        run: node scripts/check-docs.mjs
+
+      - name: Release consistency (version, CHANGELOG, budgets, doc counts)
+        run: node scripts/check-release.mjs
+
+      - name: Test (file by file)
+        run: node scripts/test-all.mjs

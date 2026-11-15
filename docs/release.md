@@ -76,6 +76,7 @@ git config user.email "qibufengliu-design@users.noreply.github.com"
 - 运行时依赖必须为空；`devDependencies` 同样保持为空，测试全部用 Node 内置 `node:test`。
 - GitHub Actions 用形如 `actions/checkout@v7` 的**主版本**引用，由 Dependabot 按周提 PR 升级（`.github/dependabot.yml` 已把 Actions 更新聚成一个 PR）。PR 当天合并或关闭，不要让队列堆积。
 - 升级 Actions 主版本后，本地无法验证 CI 行为，合并前看一眼 PR 上的 CI 结果。
+- CI 由四部分组成：Ubuntu 上 Node 20/22/24 三套矩阵（零依赖校验 + 全量语法检查 + 逐文件测试）、Linux 上的 `docs & metadata`（`check-docs` + `check-release`）、以及 `windows smoke (node 22)`（同样的整洁性/发布一致性/逐文件测试，在 Windows 上再跑一遍：本插件运行在 Windows 桌面端，路径分隔符、换行符、`find` 之类的差异都在这里兜底）。Windows job 目前是**观察项**，没有加进 `main` 的必需状态检查。
 
 ## 提交信息
 

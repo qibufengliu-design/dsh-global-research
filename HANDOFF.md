@@ -44,7 +44,7 @@
 
 目标是把仓库维持在「企业级开源项目」的形态：结构固定、链接不断、版本与 tag 对齐、发版自动化。
 
-- **CI**（`.github/workflows/ci.yml`）：Node 20/22/24 矩阵跑零依赖校验 + **全部 `.js`/`.mjs` 的 `node --check`** + `node scripts/test-all.mjs`；`docs` job 跑 `node scripts/check-docs.mjs`。2026-11-15 实测：run #9（`dc040ff`）与 run #10（`2aa5d12`）四个 job 全部 `success`，Linux 上 352 例测试同样全绿（本机沙箱里 `node --test test/` 会 EPERM，属沙箱限制，不是代码问题）。
+- **CI**（`.github/workflows/ci.yml`）：Node 20/22/24 矩阵跑零依赖校验 + **全部 `.js`/`.mjs` 的 `node --check`** + `node scripts/test-all.mjs`；`docs` job 跑 `node scripts/check-docs.mjs` + `node scripts/check-release.mjs`；另有 `windows smoke (node 22)` job（插件跑在 Windows 桌面端，路径/换行差异在这里兜底，目前是观察项、未加入分支保护的必需检查）。2026-11-15 实测：run #9（`dc040ff`）与 run #10（`2aa5d12`）四个 job 全部 `success`，Linux 上 352 例测试同样全绿（本机沙箱里 `node --test test/` 会 EPERM，属沙箱限制，不是代码问题）。
 - **整洁性检查**（`scripts/check-docs.mjs`）：必需文件齐不齐、README/docs/CONTRIBUTING/SECURITY/HANDOFF 的相对链接能不能解析、CHANGELOG 有没有 `[Unreleased]` 与当前版本条目、`package.json` 元数据是否完整且零依赖、Issue 表单（`.github/ISSUE_TEMPLATE/*.yml`）的必填键与 body 类型是否合法（写坏了 GitHub 会静默不显示模板）。改完文档先跑它。
 - **发布一致性检查**（`scripts/check-release.mjs`，2026-11-15 23:14 加）：`package.json` 版本是 x.y.z 且 CHANGELOG 有对应小节、小节从新到旧排列、没有重复或空小节（空小节会导致发 Release 时正文为空）、README 预算表与 `lib/pipeline.js` 的 `DEPTH_PROFILES` 逐字段一致、README/docs/CONTRIBUTING 里没有写死的测试例数；当前版本还没打 tag 时只给提示不判失败。已接进 CI 的 `docs & metadata` job，发布清单第 2 步与 `CONTRIBUTING.md` 也同步写了。
 - **Release 自动化**（`.github/workflows/release.yml`）：推 `v*` tag 时用 `CHANGELOG.md` 里该版本的段落建 GitHub Release，发布前校验 tag 与 `package.json.version` 一致，已存在的 Release 不覆盖；历史 tag 可在 Actions 里用 `workflow_dispatch` 补建（填 tag 名即可，不重打 tag；补建路径检出 main，只校验 tag 存在与 CHANGELOG 小节）。`v0.9.5` 已由该 workflow 自动建成。
@@ -117,7 +117,7 @@ git -c http.sslBackend=openssl ls-remote origin HEAD refs/heads/main refs/tags/*
 - **远端仓库设置（2026-11-15 23:12 已用 GitHub API 配好）**：
   - About：描述「DeepSeek Harness 插件：把开放问题做成带引用、可核查的研究简报（零依赖）」；topics `citations` `deepseek` `dsh-plugin` `nodejs` `rag` `research` `web-search`；homepage 留空。
   - 功能开关：Wiki / Projects / Discussions 全部关闭（文档走 `docs/`，问答走 Issues）。
-  - `main` 分支保护：必需状态检查 `test (node 20)`、`test (node 22)`、`test (node 24)`、`docs & metadata`；Require review from Code Owners（`CODEOWNERS` = `* @qibufengliu-design`）；禁止 force push 与删除分支；**不勾「Include administrators」**——否则本机与自动化都无法直接 push `main`，这是有意的取舍。
+  - `main` 分支保护：必需状态检查 `test (node 20)`、`test (node 22)`、`test (node 24)`、`docs & metadata`；Require review from Code Owners（`CODEOWNERS` = `* @qibufengliu-design`）；禁止 force push 与删除分支；**不勾「Include administrators」**——否则本机与自动化都无法直接 push `main`，这是有意的取舍。后来新增的 `windows smoke (node 22)` 还没加进必需检查（要改需网页上补一条或再用一次 API，当前没有 token）。
   - Release：`v0.9.0`–`v0.9.4` 已补建（正文取自各版 CHANGELOG），`v0.9.5`/`v0.9.6`/`v0.9.7` 由 workflow 在推 tag 时自动创建（2026-11-15 23:36，id 446132607 / 446161812 / 446161815），七个 Release 页齐全。
   - Dependabot 的 `#1`（setup-node 4→7）、`#2`（checkout 4→7）已是关闭状态，CI 里直接用了 v7。
   - tag 现状：`v0.9.0`–`v0.9.7` 均已推送，除 `v0.9.2`（历史遗留的轻量 tag，不重打，见 `CHANGELOG.md` 的 0.9.4 说明）外都是 annotated。`v0.9.6` 的 tag 是发布守门在 2026-11-15 23:36 补打的（指向 `796d712`，该提交的 `package.json` 正是 0.9.6）：0.9.6 发布时漏打 tag，代码与 CHANGELOG 本就在 main 上，补 tag 后 Release 页随之生成，无需重发版本。

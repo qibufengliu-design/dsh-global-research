@@ -14,7 +14,7 @@
 
 ## 开发环境
 
-要求 Node.js ≥ 20（CI 覆盖 20 / 22 / 24），
+要求 Node.js ≥ 20（CI 覆盖 Ubuntu 上的 20 / 22 / 24，另有一个 Windows smoke job 用 Node 22——插件跑在 Windows 桌面端，路径分隔符与换行符的差异在那里兜底），
 
 ```powershell
 git clone https://github.com/qibufengliu-design/dsh-global-research.git

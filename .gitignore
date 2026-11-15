@@ -19,3 +19,8 @@ test-out.txt
 .idea/
 .DS_Store
 Thumbs.db
+
+# 临时调试脚本与草稿（`tmp-*.mjs`、`probe-*.mjs` 之类跑完就删的东西别进仓库）
+tmp-*
+probe-*.mjs
+.tmp/
