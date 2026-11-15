@@ -35,6 +35,7 @@
 - **已推送的 tag 不移动、不删除**。发布后发现问题，按 SemVer 再发一个 PATCH，而不是 `git tag -f` + `push --force`。
   - 历史例外：`v0.9.2` 是早期留下的轻量 tag，指向 `67a8613`，保留原样不重打；`v0.9.3` 指向材料粘贴区提交，紧随其后的修复另发 `v0.9.4`，见 CHANGELOG 里的说明。
 - tag 必须指向 `package.json.version` 相同的提交，`release.yml` 会在发布前校验，不一致直接失败。
+- tag 必须打在 `main` 上的提交：`release.yml` 用 `git merge-base --is-ancestor` 校验，分支上的提交即使打了 tag 也不会发版。
 - 不发布预发布版本（`v1.0.0-rc.1` 之类）时，不要用 `v` 之外的前缀。
 
 ## 推送环境要求

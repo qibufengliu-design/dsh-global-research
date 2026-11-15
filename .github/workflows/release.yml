@@ -82,6 +82,17 @@ jobs:
           grep -q "^## \[$V\]" CHANGELOG.md || { echo "CHANGELOG.md 里没有 [$V] 小节"; exit 1; }
           echo "CHANGELOG 有 [$V] 小节"
 
+      - name: Ensure the tagged commit is on main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          if git merge-base --is-ancestor HEAD origin/main; then
+            echo "✔ ${{ steps.meta.outputs.tag }} 指向的提交在 main 上"
+          else
+            echo "✘ ${{ steps.meta.outputs.tag }} 不在 main 上：Release 只能从 main 上的提交发"
+            exit 1
+          fi
+
       - name: Extract release notes from CHANGELOG.md
         run: |
           set -euo pipefail
