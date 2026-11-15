@@ -7,6 +7,8 @@
 import { createEngines, createRawFetcher } from './lib/engines.js'
 import { createPageFetcher } from './lib/fetch.js'
 import { DEPTH_PROFILES, runResearch } from './lib/pipeline.js'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { dirname, isAbsolute, resolve } from 'node:path'
 import { ResearchCache, cacheKey } from './lib/cache.js'
 import { ResearchSessions } from './lib/sessions.js'
 import { validateConfig } from './lib/config.js'
@@ -81,6 +83,7 @@ const OUTPUT_SCHEMA = {
     partial: { type: 'boolean' },
     depthUsed: { type: 'string', enum: ['quick', 'standard', 'deep'] },
     researchId: { type: 'string', description: '本轮研究的会话 id；下一轮追问时传回来可复用已读页面，只补缺口。' },
+    savedTo: { type: 'string', description: '设置 saveTo 时写入的绝对路径。' },
     stats: {
       type: 'object',
       properties: {
@@ -175,8 +178,10 @@ export function apply(ctx, rawConfig = {}) {
       question: { type: 'string', required: true, description: '完整的研究问题（含背景与要做的决定），不是关键词。' },
       depth: { type: 'string', enum: ['auto', 'quick', 'standard', 'deep'], description: '研究深度，默认 auto（按问题难度自动选择）。' },
       focus: { type: 'array', items: { type: 'string' }, description: '评估维度，如 ["性能","许可证","迁移成本"]。' },
+      mode: { type: 'string', enum: ['explain', 'compare', 'track', 'evaluate'], description: '研究类型：explain 解释/建议（默认）、compare 方案对比（强制对比表与适用条件）、track 进展追踪（时间线，每条带日期）、evaluate 适配评估（约束清单→匹配度→风险）。' },
       context: { type: 'string', description: '追问时把上一轮简报里相关的结论/证据原文附上（≤2000 字）。不给时，省略式提问会被当作全新问题。' },
       researchId: { type: 'string', description: '上一轮返回的 researchId；传回后可复用那轮已读的页面与证据，只补新缺口（30 分钟内有效）。' },
+      saveTo: { type: 'string', description: '可选：把简报另存为 Markdown 文件（建议绝对路径；相对路径相对于当前工作目录）。不传则不写任何文件。' },
       outputLanguage: { type: 'string', enum: ['zh', 'en', 'auto'], description: '简报语言，默认 auto。' },
     },
     output: {
@@ -240,6 +245,7 @@ export function apply(ctx, rawConfig = {}) {
         focus,
         depth,
         outputLanguage,
+        mode: args?.mode ?? 'explain',
         context,
         resume,
         onState: (snapshot) => { nextSession = snapshot },
@@ -270,6 +276,15 @@ export function apply(ctx, rawConfig = {}) {
         // Query/page/evidence/second counts already live in the brief's fixed
         // 「本次检索」 line; keep this row for diagnostics that line omits.
         result.brief += `\n\n---\n调试统计：引擎 ${(stats.engines ?? []).join(',') || '无'} · 垂直源 ${(stats.verticals ?? []).join(',') || '无'}（${stats.verticalHits ?? 0} 条${Object.keys(stats.verticalsByEngine ?? {}).length ? '：' + Object.entries(stats.verticalsByEngine).map(([name, count]) => `${name} ${count}`).join('，') : ''}）· 官方直取 ${stats.directUrls ?? 0}${(stats.refillQueries ?? []).length ? ` · 回补 ${stats.refillQueries.length} 条（${stats.refillQueries.map((query) => query.slice(0, 40)).join(' | ')}）` : ''} · 域名 ${(stats.hosts ?? []).slice(0, 8).join(',') || '无'}`
+      }
+      const saveTo = typeof args?.saveTo === 'string' ? args.saveTo.trim() : ''
+      if (saveTo) {
+        const target = isAbsolute(saveTo) ? saveTo : resolve(process.cwd(), saveTo)
+        const file = /\.(md|markdown)$/i.test(target) ? target : `${target}.md`
+        await mkdir(dirname(file), { recursive: true })
+        await writeFile(file, `${result.brief}\n`, 'utf8')
+        result.savedTo = file
+        logger(`research brief saved to ${file}`)
       }
       return result
     },

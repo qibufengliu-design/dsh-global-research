@@ -1,5 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { apply } from '../index.js'
 
 function fakeHarness() {
@@ -208,6 +211,16 @@ test('a follow-up can reuse the previous run pages through researchId', async ()
   assert.match(second.brief, /复用 \d+ 页/)
   assert.match(second.researchId, /^rs_[0-9a-f]{16}$/)
   assert.notEqual(second.researchId, first.researchId)
+})
+
+test('saveTo writes the brief to disk and returns the absolute path', async () => {
+  const { registered } = fakeHarness()
+  const target = join(tmpdir(), `gr-brief-${Date.now()}.md`)
+  const result = await registered.research.execute({ question: 'Node 22 支持到什么时候', depth: 'quick', saveTo: target }, {})
+  assert.equal(result.savedTo, target)
+  const text = await readFile(target, 'utf8')
+  assert.match(text, /## 结论/)
+  assert.match(text, /## 参考/)
 })
 
 test('an unknown researchId falls back to a fresh run instead of failing', async () => {

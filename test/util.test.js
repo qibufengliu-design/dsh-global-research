@@ -3,8 +3,17 @@ import assert from 'node:assert/strict'
 import {
   Budget, BudgetExceeded, configureDomainTrust, decodeEntities, dedupeHits, domainTrust,
   htmlToText, isBlockedDomain, jaccard, jsonSafe, normalizeUrl, parseLooseJson, rankHits,
-  truncate, canonicalKey,
+  truncate, canonicalKey, extractUrls,
 } from '../lib/util.js'
+
+test('extractUrls pulls pasted URLs out of prose and strips trailing punctuation', () => {
+  assert.deepEqual(
+    extractUrls('按 https://example.com/pricing?v=2 这页的定价，以及（https://a.com/x）哪个更便宜？'),
+    ['https://example.com/pricing?v=2', 'https://a.com/x'],
+  )
+  assert.deepEqual(extractUrls('没有链接的问题'), [])
+  assert.deepEqual(extractUrls('重复 https://a.com https://a.com 去重'), ['https://a.com'])
+})
 
 test('normalizeUrl strips tracking, fragment and trailing slash', () => {
   assert.equal(

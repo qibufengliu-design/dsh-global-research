@@ -181,6 +181,31 @@ test('planned queries (English / official-site) run before the deterministic tem
   assert.ok(seen.includes('CRA reporting obligations ENISA'))
 })
 
+test('a URL pasted into the question is fetched directly even when it is not an official domain', async () => {
+  const fetched = []
+  const config = baseConfig()
+  config.__fetchPage = async (url) => {
+    fetched.push(url)
+    return {
+      url, finalUrl: url, title: `page ${url}`, domain: new URL(url).hostname,
+      text: `Node 22 entered LTS in October 2025. Node 22 is the active LTS line and keeps receiving security fixes until April 2027. Source: ${url}`,
+      links: [],
+      ok: true,
+    }
+  }
+  const result = await runResearch({
+    question: '按 https://example.com/pricing 这页的定价，Node 22 的商用支持值得买吗',
+    depth: 'quick',
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.equal(fetched[0], 'https://example.com/pricing')
+  assert.ok(result.stats.directUrls >= 1)
+  assert.ok(result.sources.some((source) => source.url.includes('example.com/pricing')))
+})
+
 test('planner-provided official URLs are fetched, mined for the legal text, and cited', async () => {
   const fetched = []
   const config = baseConfig()

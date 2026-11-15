@@ -2,9 +2,29 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   appendReferences, appendStats, assignSourceIds, buildResult, computeConfidence,
-  ensureSections, fallbackBrief, validateCitations,
+  ensureSections, fallbackBrief, gradeSource, validateCitations,
 } from '../lib/brief.js'
-import { autoDepth, buildQueries, groupEvidence, resolveDepth } from '../lib/pipeline.js'
+import { autoDepth, buildQueries, groupEvidence, resolveDepth, shortFragments } from '../lib/pipeline.js'
+
+test('references carry an evidence grade so a blog does not look like a regulation', () => {
+  assert.equal(gradeSource('https://eur-lex.europa.eu/eli/reg/2024/2847/oj'), '官方')
+  assert.equal(gradeSource('https://stackoverflow.com/questions/1/x'), '论坛')
+  assert.equal(gradeSource('https://arxiv.org/abs/2401.00001'), '论文')
+  assert.equal(gradeSource('https://github.com/nodejs/release'), '仓库')
+  assert.equal(gradeSource('https://example.com/blog/post'), '网页')
+  const brief = appendReferences('## 结论\nok', [
+    { id: 'S1', title: 'CRA', url: 'https://eur-lex.europa.eu/eli/reg/2024/2847/oj', domain: 'eur-lex.europa.eu' },
+  ])
+  assert.ok(brief.includes('（官方 · eur-lex.europa.eu）'))
+})
+
+test('long Chinese questions are also cut into short query fragments', () => {
+  const fragments = shortFragments('我在用 Spring Boot 3 写一个带幂等重试的支付回调接口，应该怎么设计事务边界和去重表')
+  assert.ok(fragments.length >= 1 && fragments.length <= 2)
+  assert.ok(fragments.every((fragment) => fragment.length <= 12))
+  const queries = buildQueries(['支付回调接口设计'], [], '我在用 Spring Boot 3 写一个带幂等重试的支付回调接口，应该怎么设计事务边界和去重表', 8)
+  assert.ok(queries.some((query) => query.length <= 12 && /[\u4e00-\u9fff]/.test(query)))
+})
 
 function cluster(claim, urls, stance = 'support') {
   const domains = new Set(urls.map((url) => new URL(url).hostname))
