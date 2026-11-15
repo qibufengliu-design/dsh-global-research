@@ -18,6 +18,25 @@ test('references carry an evidence grade so a blog does not look like a regulati
   assert.ok(brief.includes('（官方 · eur-lex.europa.eu）'))
 })
 
+test('via jina/render downgrades official and paper grades one notch', () => {
+  const official = 'https://eur-lex.europa.eu/eli/reg/2024/2847/oj'
+  assert.equal(gradeSource(official), '官方')
+  assert.equal(gradeSource(official, 'jina'), '论文')
+  assert.equal(gradeSource(official, 'render'), '论文')
+  // Only proxy-rendered text is discounted; the normal raw path keeps the grade.
+  assert.equal(gradeSource(official, 'raw'), '官方')
+  assert.equal(gradeSource('https://arxiv.org/abs/2401.00001', 'jina'), '仓库')
+  // A downgrade must never lift a weak source.
+  assert.equal(gradeSource('https://example.com/blog/post', 'jina'), '网页')
+  const brief = appendReferences('## 结论\nok', [
+    { id: 'S1', title: 'CRA', url: official, domain: 'eur-lex.europa.eu', via: 'jina' },
+  ])
+  assert.ok(brief.includes('（论文 · eur-lex.europa.eu）'))
+  // The retrieval path travels with the source table so grading is auditable.
+  const sources = assignSourceIds([{ evidence: [{ url: 'https://nodejs.org/en', title: 'Node 22', via: 'sitemap' }] }])
+  assert.equal(sources[0].via, 'sitemap')
+})
+
 test('long Chinese questions are also cut into short query fragments', () => {
   const fragments = shortFragments('我在用 Spring Boot 3 写一个带幂等重试的支付回调接口，应该怎么设计事务边界和去重表')
   assert.ok(fragments.length >= 1 && fragments.length <= 2)

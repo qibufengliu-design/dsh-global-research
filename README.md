@@ -188,7 +188,7 @@ config:
 Get-ChildItem test\*.test.js | ForEach-Object { node $_.FullName }
 ```
 
-覆盖：URL 规范化与内容去重、预算、JSON 修复、引用校验、DDG 解析、引擎失败隔离与自动禁用、付费引擎解析与 key 来源、垂直源选择与解析（GitHub/arXiv/StackExchange/npm/HN/PyPI，含垃圾 payload、纯中文 query 跳过、SE 标签映射与 intitle 回退、单源失败隔离）、管线十步（假引擎/假抓取/假模型，含检索计划优先与 ghost citation 清理）、阶段耗时（六个阶段的整数毫秒、快跑不进简报）、官方链接挖掘与预算边界、EUR-Lex Cellar 映射与回退、EUR-Lex 摘要页/搜索页降权与 ELI 原文优先、EU 站点语言前缀归一、法规问题回补预留页位、无一手源时回补强制官方域名 query、垂直源正文兜底与选择位保护、配置校验（类型强转/夹取/未知键 warning）、域名信任名单与黑名单过滤、缓存（key 归一、TTL、LRU、命中不调模型、focus 不同绕过、可关闭）、client 卡片解析（置信度徽章/来源数/耗时/失败与运行中状态/无分段兜底/阶段 chip 与缺段不渲染）、阶段摘要格式（>0.5s、最多 4 段、按阶段顺序输出）、`apply` 注册、skill 注册与端到端 execute。共 237 例。
+覆盖：URL 规范化与内容去重、预算、JSON 修复、引用校验、DDG 解析、引擎失败隔离与自动禁用、付费引擎解析与 key 来源、垂直源选择与解析（GitHub/arXiv/StackExchange/npm/HN/PyPI，含垃圾 payload、纯中文 query 跳过、SE 标签映射与 intitle 回退、单源失败隔离）、管线十步（假引擎/假抓取/假模型，含检索计划优先与 ghost citation 清理）、阶段耗时（六个阶段的整数毫秒、快跑不进简报）、官方链接挖掘与预算边界、EUR-Lex Cellar 映射与回退、EUR-Lex 摘要页/搜索页降权与 ELI 原文优先、EU 站点语言前缀归一、法规问题回补预留页位、无一手源时回补强制官方域名 query、垂直源正文兜底与选择位保护、配置校验（类型强转/夹取/未知键 warning）、域名信任名单与黑名单过滤、缓存（key 归一、TTL、LRU、命中不调模型、focus 不同绕过、可关闭）、client 卡片解析（置信度徽章/来源数/耗时/失败与运行中状态/无分段兜底/阶段 chip 与缺段不渲染）、阶段摘要格式（>0.5s、最多 4 段、按阶段顺序输出）、`apply` 注册、skill 注册与端到端 execute、sourcePlan 通道声明、sitemap 解析与关键词打分、sitemap 预算/失败隔离、用户提供资料作为证据。共 251 例。
 
 ## 真实网络 e2e
 
@@ -229,6 +229,52 @@ $env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
 - **参考完整性**：参考末尾追加「另有 N 个页面被读取但未采用（域名）」，把读过却没进参考的页面在明面上交代掉。
 - **一手来源**：价格类问题自动直取厂商价目页（DeepSeek / 阿里云 / 智谱 / 火山），取不到的写进「未解决」的「官方价目页未取到：域名」，不静默跳过。
 
+## 0.6.0：按问题类别取源（sourcePlan / sitemap 定向爬取 / 用户提供资料）
+
+0.6.0 把"取哪些源"从 Step 2b/3b 的隐式硬编码，改成策略里可声明的 `sourcePlan`。分三层：
+
+1. **策略层**（`lib/strategies.js`）：每个 `questionKind` 的 pack 可声明 `sourcePlan.channels`，通道形状为
+   `{ id, method: 'sitemap' | 'direct' | 'api', hosts: [...], maxPages }`，外加
+   `renderFallback: { allowed, maxCalls }`。默认策略的 `sourcePlan` 是空通道数组 + `renderFallback: { allowed: false, maxCalls: 0 }`，
+   因此默认路径的抓取集合与 0.5.x 完全一致（由既有测试保护）。
+2. **执行层**（`lib/pipeline.js` Step 2a）：只执行 `method: 'sitemap'` 的通道。其余 `direct` / `api` 通道目前**只是声明**，
+   留给后续版本接线（现有直取/垂直源逻辑不动）。
+3. **取回层**（`lib/fetch.js`）：每个取回结果统一带 `via`（`raw` / `web` / `jina` / `cellar`，sitemap 页面由管线覆盖为 `sitemap`），
+   供 `gradeSource(url, via)` 决定是否降档。
+
+通道表（0.6.0 声明值）：
+
+| 通道 | 适用 questionKind | method | hosts | maxPages |
+| --- | --- | --- | --- | --- |
+| `official-docs` | tech-selection / learning | sitemap | docs.spring.io, spring.io, langchain4j.dev, nodejs.org, docs.python.org, developer.mozilla.org | 3 |
+| `pricing` | fresh-data | direct | api-docs.deepseek.com, help.aliyun.com, bigmodel.cn, www.volcengine.com | 2 |
+| `standards` | legal | direct | prisma-statement.org, cochrane.org, eric.ed.gov, owasp.org, eur-lex.europa.eu | 2 |
+| `papers` | contested | api | arxiv.org, openalex.org, pmc.ncbi.nlm.nih.gov | 2 |
+
+**sitemap 定向爬取**（`lib/sources.js`）：`crawlSitemap` 先取 `https://host/sitemap.xml`，失败再试 `sitemap_index.xml`；
+`sitemapindex` 只向下跟一层子 sitemap；解析 `<loc>` 后按问题关键词（latin token + CJK 短片段）对路径分词打分，取前 N 条。
+约束：单站最多 2 次 sitemap HTTP，请求间隔 ≥400ms，失败返回 `{ ok: false, reason }` 不抛异常；
+不解析 robots.txt（已知限制）。
+
+**预算与失败**：sitemap 抓回的页面走同一条 `__fetchPage`，成功一页扣一格页预算（`budget.take('pages')`），
+预算不够就少抓；失败只记 `stats.sourceFailures`（数量）和内部 `{channel, host, reason}`，不中断管线。
+非 docs 类问题不会触发 sitemap；默认策略没有通道，所以也不会慢。
+
+**渲染兜底门槛**：`renderFallback.allowed` 只在文档站通道（`official-docs`）为 `true`、`maxCalls: 1`，其余为 `false / 0`。
+0.6.0 只落数据模型与校验门槛，**渲染器本身尚未接入**（见已知限制）。
+
+**用户提供资料**：`research` 新增可选 `text`（≤20000 字）。传入时作为最高优先级证据页
+（`url: 'user-provided'`、`title: '用户提供的资料'`、`engine: 'user'`）放在证据列表首位，检索仍照常运行；
+`text` 参与 cacheKey，不同正文不会串缓存；不落盘。
+
+已知限制：
+
+- 只探站点根的 `sitemap.xml` / `sitemap_index.xml`；`docs.spring.io` 的根 sitemap 实际是 404，Spring 文档 sitemap 位于
+  `docs.spring.io/spring-boot/sitemap.xml`，当前通道（host 级）抓不到。
+- `sitemapindex` 只跟一层，嵌套更深的站点会少抓。
+- `direct` / `api` 通道仅声明不执行；`renderFallback` 未接线。
+- 不读 robots.txt，也不做 crawl-delay 之外的站点限速。
+
 ## 安装与迁移到另一台机器
 
 本项目是 DSH bundle 插件，不发布到 npm，按“目录 + profile patch”安装：
@@ -260,6 +306,14 @@ API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会
 
 ![输入框右侧的深度胶囊](docs/screenshots/03-composer.png)
 ## 更新日志
+
+### 0.6.0（2026-11-15）
+
+- **sourcePlan**：策略按 `questionKind` 声明取源通道（official-docs / pricing / standards / papers），默认策略保持空通道、抓取集合不变。
+- **sitemap 定向爬取**：`lib/sources.js` 解析 `sitemap.xml` / `sitemapindex`，按问题关键词给路径打分选页；Step 2a 只对 docs 类问题执行，计入页预算，失败隔离。
+- **via 标记与降档**：取回结果统一带 `via`；经 Jina / 渲染兜底拿到的官方或论文来源在参考里降一档。
+- **用户提供资料**：`text` 参数把正文作为最高优先级证据，参与缓存 key，不落盘。
+- 新增 `test/sources.test.js`，测试总数 251。
 
 ### 0.5.3（2026-11-15）
 

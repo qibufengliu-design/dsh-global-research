@@ -66,3 +66,16 @@ test('clear empties the cache', () => {
   cache.clear()
   assert.equal(cache.size, 0)
 })
+
+test('cacheKey keeps user-provided text so different material never shares a brief', () => {
+  const question = 'Node 22 支持到什么时候'
+  const plain = cacheKey({ question, depth: 'quick' })
+  const withText = cacheKey({ question, depth: 'quick', text: 'Node 22 支持到 2027 年 4 月。' })
+  assert.notEqual(plain, withText, 'provided text must change the key')
+  // Formatting noise should not fragment the cache.
+  assert.equal(
+    withText,
+    cacheKey({ question, depth: 'quick', text: '  Node 22   支持到 2027 年 4 月。 ' }),
+  )
+  assert.notEqual(withText, cacheKey({ question, depth: 'quick', text: 'Node 22 支持到 2026 年 4 月。' }))
+})

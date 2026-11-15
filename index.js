@@ -104,6 +104,9 @@ const OUTPUT_SCHEMA = {
         cachedAgeMinutes: { type: 'number' },
         reusedPages: { type: 'number' },
         resumed: { type: 'boolean' },
+        // 0.6.0 sourcePlan diagnostics.
+        sitemapPages: { type: 'number' },
+        sourceFailures: { type: 'number' },
       },
     },
   },
@@ -190,6 +193,7 @@ export function apply(ctx, rawConfig = {}) {
       focus: { type: 'array', items: { type: 'string' }, description: '评估维度，如 ["性能","许可证","迁移成本"]。' },
       mode: { type: 'string', enum: ['explain', 'compare', 'track', 'evaluate'], description: '研究类型：explain 解释/建议（默认）、compare 方案对比（强制对比表与适用条件）、track 进展追踪（时间线，每条带日期）、evaluate 适配评估（约束清单→匹配度→风险）。' },
       context: { type: 'string', description: '追问时把上一轮简报里相关的结论/证据原文附上（≤2000 字）。不给时，省略式提问会被当作全新问题。' },
+      text: { type: 'string', description: '可选：直接提供资料正文（≤20000 字）。会作为最高优先级证据放进结果，同时仍会补充检索。' },
       researchId: { type: 'string', description: '上一轮返回的 researchId；传回后可复用那轮已读的页面与证据，只补新缺口（30 分钟内有效）。' },
       saveTo: { type: 'string', description: '可选：把简报另存为 Markdown 文件（建议绝对路径；相对路径相对于当前工作目录）。不传则不写任何文件。' },
       outputLanguage: { type: 'string', enum: ['zh', 'en', 'auto'], description: '简报语言，默认 auto。' },
@@ -211,6 +215,11 @@ export function apply(ctx, rawConfig = {}) {
       if (question.length < 4) throw new Error('research 需要完整问题（question 字段），不能为空。')
       if (question.length > 2000) throw new Error('question 过长（上限 2000 字），请精简后重试。')
       const context = typeof args?.context === 'string' ? args.context.trim().slice(0, 2000) : ''
+      // 0.6.0 — user-supplied material. Capped here so neither the prompt nor
+      // the cache key can be blown up; it also enters the key so two different
+      // texts never share a cached brief.
+      const userText = typeof args?.text === 'string' ? args.text.trim() : ''
+      if (userText.length > 20000) throw new Error('text 过长（上限 20000 字），请精简后重试。')
       const researchId = typeof args?.researchId === 'string' ? args.researchId.trim() : ''
       const resume = researchId ? sessions.get(researchId) : null
       if (researchId && !resume) logger(`research session ${researchId} not found or expired; running fresh`)
@@ -232,7 +241,7 @@ export function apply(ctx, rawConfig = {}) {
       // "Latest / price / version" answers go stale in minutes; never serve
       // those from cache (a false positive only costs one re-run).
       const timeSensitive = isTimeSensitive(`${question} ${focus.join(' ')}`)
-      const key = cache && !timeSensitive && !context && !resume ? cacheKey({ question, depth, focus, language: outputLanguage, mode, signalVersion: BUILD_ID }) : undefined
+      const key = cache && !timeSensitive && !context && !resume ? cacheKey({ question, depth, focus, language: outputLanguage, mode, text: userText, signalVersion: BUILD_ID }) : undefined
       if (cache && key) {
         const cached = cache.get(key)
         if (cached) {
@@ -260,6 +269,7 @@ export function apply(ctx, rawConfig = {}) {
         outputLanguage,
         mode,
         context,
+        userText,
         resume,
         onState: (snapshot) => { nextSession = snapshot },
         config: { ...config, __engines: engines, __fetchPage: fetchPage, __fetchRaw: fetchRaw },
@@ -288,7 +298,7 @@ export function apply(ctx, rawConfig = {}) {
         const stats = result.stats ?? {}
         // Query/page/evidence/second counts already live in the brief's fixed
         // 「本次检索」 line; keep this row for diagnostics that line omits.
-        result.brief += `\n\n---\n调试统计：引擎 ${(stats.engines ?? []).join(',') || '无'} · 垂直源 ${(stats.verticals ?? []).join(',') || '无'}（${stats.verticalHits ?? 0} 条${Object.keys(stats.verticalsByEngine ?? {}).length ? '：' + Object.entries(stats.verticalsByEngine).map(([name, count]) => `${name} ${count}`).join('，') : ''}）· 官方直取 ${stats.directUrls ?? 0}${(stats.refillQueries ?? []).length ? ` · 回补 ${stats.refillQueries.length} 条（${stats.refillQueries.map((query) => query.slice(0, 40)).join(' | ')}）` : ''} · 域名 ${(stats.hosts ?? []).slice(0, 8).join(',') || '无'}`
+        result.brief += `\n\n---\n调试统计：引擎 ${(stats.engines ?? []).join(',') || '无'} · 垂直源 ${(stats.verticals ?? []).join(',') || '无'}（${stats.verticalHits ?? 0} 条${Object.keys(stats.verticalsByEngine ?? {}).length ? '：' + Object.entries(stats.verticalsByEngine).map(([name, count]) => `${name} ${count}`).join('，') : ''}）· 官方直取 ${stats.directUrls ?? 0} · sitemap ${stats.sitemapPages ?? 0}${(stats.sourceFailures ?? 0) ? `（失败 ${stats.sourceFailures}）` : ''}${(stats.refillQueries ?? []).length ? ` · 回补 ${stats.refillQueries.length} 条（${stats.refillQueries.map((query) => query.slice(0, 40)).join(' | ')}）` : ''} · 域名 ${(stats.hosts ?? []).slice(0, 8).join(',') || '无'}`
       }
       const saveTo = typeof args?.saveTo === 'string' ? args.saveTo.trim() : ''
       if (saveTo) {

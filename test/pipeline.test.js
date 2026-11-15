@@ -846,3 +846,133 @@ test('an unreadable official price list becomes a 未解决 line', async () => {
   assert.match(result.brief, /^## 未解决\n- 官方价目页未取到：api-docs\.deepseek\.com/m)
   assert.match(result.brief, /官方价目页未取到：help\.aliyun\.com/)
 })
+
+// --- 0.6.0: sourcePlan / sitemap / user-provided text -----------------------
+
+const SPRING_SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset>
+  <url><loc>https://docs.spring.io/spring-boot/3.4/reference/configuration.html</loc></url>
+  <url><loc>https://docs.spring.io/spring-boot/3.4/reference/application-properties.html</loc></url>
+  <url><loc>https://docs.spring.io/spring-boot/3.4/reference/actuator/index.html</loc></url>
+  <url><loc>https://docs.spring.io/spring-boot/3.4/reference/security/index.html</loc></url>
+  <url><loc>https://docs.spring.io/spring-boot/3.4/reference/testing/index.html</loc></url>
+  <url><loc>https://docs.spring.io/spring-boot/3.4/reference/upgrading.html</loc></url>
+  <url><loc>https://docs.spring.io/spring-boot/3.4/reference/web/index.html</loc></url>
+  <url><loc>https://docs.spring.io/spring-boot/3.4/reference/data/index.html</loc></url>
+</urlset>`
+
+function techSelectionStrategy(question, maxPages) {
+  const strategy = resolveStrategy({ questionKind: 'tech-selection', depth: 'quick', question })
+  // Widen the channel cap so the test can prove the page budget, not the pack,
+  // is what limits the crawl.
+  return {
+    ...strategy,
+    sourcePlan: {
+      ...strategy.sourcePlan,
+      channels: strategy.sourcePlan.channels.map((channel) => ({ ...channel, maxPages })),
+    },
+  }
+}
+
+test('a docs kind crawls its declared sitemap and clamps pages to the budget', async () => {
+  const sitemapRequests = []
+  const fetched = []
+  const config = baseConfig({
+    __fetchRaw: async (url) => {
+      sitemapRequests.push(url)
+      return { status: 200, body: SPRING_SITEMAP }
+    },
+  })
+  // baseConfig installs its own __fetchPage; override after it so we can see
+  // exactly which sitemap URLs the pipeline reads.
+  config.__fetchPage = fakeFetcher(fetched)
+  const result = await runResearch({
+    question: 'Spring Boot 3 配置迁移有哪些坑',
+    depth: 'quick',
+    strategy: techSelectionStrategy('Spring Boot 3 配置迁移有哪些坑', 9),
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  const sitemapFetches = fetched.filter((url) => url.startsWith('https://docs.spring.io/spring-boot/'))
+  // quick budget is 3 pages; the channel asks for 9, the budget still wins.
+  assert.equal(sitemapFetches.length, 3)
+  assert.equal(result.stats.sitemapPages, 3)
+  assert.equal(result.stats.pagesFetched, 3)
+  assert.equal(result.stats.sourceFailures, 0)
+  assert.deepEqual(sitemapRequests.filter((url) => /sitemap/i.test(url)), ['https://docs.spring.io/sitemap.xml'])
+  assert.ok(result.sources.some((source) => source.domain === 'docs.spring.io'), JSON.stringify(result.sources))
+  assert.match(result.brief, /^## 结论$/m)
+})
+
+test('a non-docs question never touches a sitemap', async () => {
+  const sitemapRequests = []
+  const config = baseConfig({
+    __fetchRaw: async (url) => {
+      sitemapRequests.push(url)
+      return { status: 404, body: '' }
+    },
+  })
+  const result = await runResearch({
+    question: '什么是幂等性？为什么重试要配幂等键',
+    depth: 'quick',
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.deepEqual(sitemapRequests.filter((url) => /sitemap/i.test(url)), [])
+  assert.equal(result.stats.sitemapPages, 0)
+  assert.equal(result.stats.sourceFailures, 0)
+  assert.ok(result.brief.length > 0)
+})
+
+test('a broken sitemap is recorded as a source failure and does not stop the run', async () => {
+  const attempted = []
+  const config = baseConfig({
+    __fetchRaw: async (url) => {
+      attempted.push(url)
+      return { status: 404, body: '' }
+    },
+  })
+  const result = await runResearch({
+    question: 'Spring Boot 3 配置迁移有哪些坑',
+    depth: 'quick',
+    strategy: techSelectionStrategy('Spring Boot 3 配置迁移有哪些坑', 3),
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.equal(result.partial, false)
+  assert.equal(result.stats.sitemapPages, 0)
+  assert.ok(result.stats.sourceFailures >= 1)
+  assert.ok(attempted.includes('https://docs.spring.io/sitemap.xml'))
+  assert.ok(result.brief.length > 0)
+})
+
+test('user-provided text is the first evidence source, not a fetched page', async () => {
+  const userText = [
+    'Node 22 entered LTS in October 2025.',
+    'Node 22 is the active LTS line and keeps receiving security fixes until April 2027.',
+    '团队应在 2027 年 4 月前规划升级。',
+  ].join(' ')
+  const result = await runResearch({
+    question: 'Node 22 支持到什么时候',
+    depth: 'quick',
+    userText,
+    config: baseConfig(),
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.equal(result.sources[0].url, 'user-provided')
+  assert.equal(result.sources[0].title, '用户提供的资料')
+  assert.match(result.sources[0].type, /docs|web/)
+  // The extra page is free: it never inflates the fetched-page count or hosts.
+  assert.ok(result.stats.queries >= 1, 'buildQueries still runs')
+  assert.ok(!(result.stats.hosts ?? []).includes('user-provided'))
+  assert.ok(result.stats.pagesFetched >= 1)
+  assert.match(result.brief, /^## 结论$/m)
+})
