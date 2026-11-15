@@ -1501,9 +1501,10 @@ test('an option with no evidence is called out instead of silently dropped (0.7.
   assert.match(result.brief, /^\| bun \| 无证据 \| 无证据 \| 无证据 \|$/m)
   assert.match(result.brief, /^\| pnpm \| 安装快 \[S\d\]/m, 'the evidenced rows keep their citations')
   // 0.9.7 — bun owns a placeholder row, so the gap must say that instead of
-  // "not compared": the table does list it, only the evidence is missing. The
-  // 优势/风险 table has no price column, so the wording stays price-neutral.
-  assert.match(result.brief, /## 未解决[\s\S]*选项「bun」在对比表中占位，但未取得可用证据（零证据）/)
+  // "not compared": the table does list it, only the evidence is missing. 1.0.1
+  // dropped the "price" claim entirely — a compare row can be blank for 优势/风险/
+  // 适用条件 just as well, so the note only promises "关键属性".
+  assert.match(result.brief, /## 未解决[\s\S]*选项「bun」在对比表中占位，但关键属性未取得（零证据）/)
   assert.doesNotMatch(result.brief, /选项「bun」在本轮证据中没有可用来源/)
   assert.ok(!result.brief.includes('价格未取得'), 'a non-price table must not claim a missing price')
 })
@@ -1519,6 +1520,26 @@ test('compareOptions trims the Chinese predicate off the last option (0.8.1)', (
   assert.deepEqual(real, ['Spring AI', 'LangChain4j', 'Haystack'], JSON.stringify(real))
   // The zero-evidence message now names the option, not the leftover predicate.
   assert.ok(!real.some((option) => /该$/.test(option)), JSON.stringify(real))
+})
+
+// 1.0.1 — the reported 1.0.0 run asked "Java 后端做 RAG 应用，Spring AI 和 LangChain4j
+// 怎么选" and got three candidates: the comma-split background clause became one,
+// and the two real products stayed glued into a single "Spring AI 和 LangChain4j".
+test('compareOptions splits on connectives and drops the background clause (1.0.1)', () => {
+  const real = compareOptions('Java 后端做 RAG 应用，Spring AI 和 LangChain4j 怎么选')
+  assert.deepEqual(real, ['Spring AI', 'LangChain4j'], JSON.stringify(real))
+  // The question's setup ("Java 后端做 RAG 应用") is background, never a candidate.
+  assert.ok(!real.some((option) => /应用|后端|Java/.test(option)), JSON.stringify(real))
+  // 和 / 与 / 还是 / vs all split the same way.
+  assert.deepEqual(compareOptions('Spring AI 与 LangChain4j 怎么选'), ['Spring AI', 'LangChain4j'])
+  assert.deepEqual(compareOptions('Spring AI vs LangChain4j 哪个好'), ['Spring AI', 'LangChain4j'])
+  // A clause over 24 chars cannot be a product name: fall back to known names.
+  const verbose = compareOptions('我们团队在做企业内部知识库，后端用 Spring Boot，Spring AI 和 LangChain4j 哪个更适合生产环境')
+  assert.deepEqual(verbose, ['Spring AI', 'LangChain4j'], JSON.stringify(verbose))
+  // At most three candidates; the list keeps the question's order.
+  assert.deepEqual(compareOptions('Spring AI、LangChain4j、Haystack、Dify 该怎么选'), ['Spring AI', 'LangChain4j', 'Haystack'])
+  // One candidate is not a comparison.
+  assert.deepEqual(compareOptions('Spring AI 怎么选'), [])
 })
 
 test('zero-evidence gap names the trimmed option (0.8.1)', async () => {
@@ -1793,10 +1814,11 @@ test('a directed retry that finds nothing keeps the gap and says it was tried (0
   assert.ok(gap, JSON.stringify(result.gaps))
   assert.match(gap, /已定向检索 1 次仍未获证/)
   // 0.9.7 — the compare table already carries an independent 豆包 row with 无证据
-  // cells, so the gap says "listed but unpriced" instead of "not compared".
-  assert.match(result.brief, /选项「豆包」在对比表中占位，但价格未取得（零证据）/)
+  // cells, so the gap says "listed but unresolved" instead of "not compared".
+  // 1.0.1 — "关键属性" replaces the narrower "价格" wording.
+  assert.match(result.brief, /选项「豆包」在对比表中占位，但关键属性未取得（零证据）/)
   assert.doesNotMatch(result.brief, /选项「豆包」在本轮证据中没有可用来源/)
-  assert.match(gap, /在对比表中占位，但价格未取得（零证据）/)
+  assert.match(gap, /在对比表中占位，但关键属性未取得（零证据）/)
   assert.deepEqual(result.stats.targetedRefill, { optionsTried: 1, pagesFetched: 0, optionsResolved: 0, skipped: null })
   assert.match(result.brief, /定向回补 1 项（解决 0）/)
   assert.ok(!result.brief.includes('定向回补跳过'), result.brief)

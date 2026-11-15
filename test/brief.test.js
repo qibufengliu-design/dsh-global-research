@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ACTION_CHECKLIST_HEADING, appendConflictSection, appendReferences, appendRetrievalFlow, appendStats, applyZeroEvidenceOptions, assignSourceIds, buildResult,
-  checkCompareRows, computeConfidence, COST_OVERVIEW_HEADER, DECISION_CRITERIA_HEADING, ensureSections, fallbackBrief, formatRetrievalFlow, gradeSource, groundCriteria, isPriceColumnHeader, markUnsourcedNumbers, missingSections, PRICE_SEE_NOTE, requiredSectionsFor,
+  checkCompareRows, computeConfidence, COST_OVERVIEW_HEADER, DECISION_CRITERIA_HEADING, ensureSections, fallbackBrief, fillEmptyCompareCells, formatRetrievalFlow, gradeSource, groundCriteria, isPriceColumnHeader, markUnsourcedNumbers, missingSections, PRICE_SEE_NOTE, requiredSectionsFor,
   sanitizeCompareTable, UNSOURCED_NUMBER_MARK, validateCitations, zeroEvidenceGapText,
 } from '../lib/brief.js'
 import { findSelfContradictions } from '../lib/assertions.js'
@@ -688,14 +688,16 @@ test('a zero-evidence option is marked 无证据 in the comparison table (0.7.1)
 
   // 0.9.7 — an option that owns a placeholder row is listed, not omitted, and a
   // price table says which fact is missing. Default (no row) stays unchanged.
-  assert.equal(zeroEvidenceGapText('豆包', { hasRow: true }), '选项「豆包」在对比表中占位，但价格未取得（零证据）')
+  // 1.0.1 — the wording no longer promises a price: a compare row can be blank
+  // for any key attribute (优势/风险/适用条件), not just cost.
+  assert.equal(zeroEvidenceGapText('豆包', { hasRow: true }), '选项「豆包」在对比表中占位，但关键属性未取得（零证据）')
   assert.equal(
     zeroEvidenceGapText('豆包', { hasRow: true, priceTable: true }),
-    '选项「豆包」在对比表中占位，但价格未取得（零证据）',
+    '选项「豆包」在对比表中占位，但关键属性未取得（零证据）',
   )
   assert.equal(
     zeroEvidenceGapText('bun', { hasRow: true, priceTable: false }),
-    '选项「bun」在对比表中占位，但未取得可用证据（零证据）',
+    '选项「bun」在对比表中占位，但关键属性未取得（零证据）',
   )
 })
 
@@ -931,8 +933,8 @@ test('a candidate merged into another row is named under the compare table (0.9.
   assert.equal(complete, false)
   assert.equal(stats.compareRowsComplete, false)
   assert.deepEqual(sink.missing, ['qwen', '豆包'])
-  assert.match(sink.brief, /^> 注意：qwen 未作为独立行出现（价格未取得），下表结论不含该候选。$/m)
-  assert.match(sink.brief, /^> 注意：豆包 未作为独立行出现（价格未取得），下表结论不含该候选。$/m)
+  assert.match(sink.brief, /^> 注意：qwen 未作为独立行出现（关键属性未取得），下表结论不含该候选。$/m)
+  assert.match(sink.brief, /^> 注意：豆包 未作为独立行出现（关键属性未取得），下表结论不含该候选。$/m)
   // The note sits after the table, before the next section.
   assert.ok(sink.brief.indexOf('> 注意：') < sink.brief.indexOf('## 置信度'))
   // A merged row is never credited to either of its members.
@@ -1183,4 +1185,138 @@ test('the delivered 成本概览 no longer re-marks 未核实 after sanitize (0.
   assert.equal(isPriceColumnHeader('成本'), true, 'a plain 成本 column is still a price column')
   assert.equal(isPriceColumnHeader(COST_OVERVIEW_HEADER), false, '成本概览 must not be treated as a price column')
   assert.equal(isPriceColumnHeader('价格'), true)
+})
+
+// 1.0.1 — the reported 1.0.0 run fetched nine references, seven of them official,
+// and still delivered a 3×4 compare table whose every cell said 无证据. The table
+// filler reuses what the evidence already says about each option instead of
+// throwing the cells away, and picks the claim by column semantics.
+function fillTable(rows, header = '| 方案 | 优势 | 风险 | 适用场景 |') {
+  return ['## 方案对比', header, '| --- | --- | --- | --- |', ...rows, '', '## 置信度', 'low'].join('\n')
+}
+
+function fillClusters() {
+  return [{
+    claim: 'Spring AI 提供统一的 ChatClient 抽象，可以切换不同模型',
+    evidence: [
+      { id: 'S1', claim: 'Spring AI 提供统一的 ChatClient 抽象，可以切换不同模型', url: 'https://docs.spring.io/spring-ai/reference/chatclient.html' },
+    ],
+  }, {
+    claim: 'Spring AI 需要 Java 17 以上，迁移现有项目需要额外改造',
+    evidence: [
+      { id: 'S2', claim: 'Spring AI 需要 Java 17 以上，迁移现有项目需要额外改造', url: 'https://docs.spring.io/spring-ai/reference/getting-started.html' },
+    ],
+  }, {
+    claim: 'Spring AI 适合已经使用 Spring 后端的企业项目',
+    evidence: [
+      { id: 'S3', claim: 'Spring AI 适合已经使用 Spring 后端的企业项目', url: 'https://docs.spring.io/spring-ai/reference/intro.html' },
+    ],
+  }, {
+    claim: 'LangChain4j 支持多种向量库，但文档和示例仍偏少',
+    evidence: [
+      { id: 'S4', claim: 'LangChain4j 支持多种向量库，但文档和示例仍偏少', url: 'https://docs.langchain4j.dev/integrations/' },
+    ],
+  }, {
+    claim: 'LangChain4j 适用于快速搭建原型',
+    evidence: [
+      { id: 'S5', claim: 'LangChain4j 适用于快速搭建原型', url: 'https://docs.langchain4j.dev/tutorials/' },
+    ],
+  }]
+}
+
+test('empty compare cells are filled with the option own claims (1.0.1)', () => {
+  const table = fillTable([
+    '| Spring AI | 无证据 | 无证据 | 无证据 |',
+    '| LangChain4j | 无证据 | 无证据 | 无证据 |',
+  ])
+  const filled = fillEmptyCompareCells(table, fillClusters(), ['Spring AI', 'LangChain4j'])
+  assert.ok(filled.split('\n').some((line) => line.startsWith('| Spring AI | Spring AI ')), filled)
+  const ai = filled.split('\n').find((line) => line.startsWith('| Spring AI |'))
+  // 优势 keeps the first claim; 风险 prefers a risk/limitation claim; 适用场景 the fit one.
+  assert.match(ai, /ChatClient 抽象[^|]*\[S1\]/)
+  assert.match(ai, /风险|需要 Java 17|改造/)
+  assert.match(ai, /适合已经使用 Spring 后端/)
+  const lc = filled.split('\n').find((line) => line.startsWith('| LangChain4j |'))
+  assert.match(lc, /向量库/)
+  assert.match(lc, /适用于快速搭建原型/)
+  // A column with no matching claim stays 无证据 instead of stretching another claim.
+  assert.match(lc, /无证据/)
+  assert.ok(!/LangChain4j[^|]*风险[^|]*\[S4\]/.test(lc), lc)
+  // The table keeps its shape: header, separator and one row per option.
+  assert.equal(filled.split('\n').filter((line) => line.trim().startsWith('|')).length, 4)
+  // Claims longer than 60 chars are truncated rather than pasted whole.
+  assert.ok(filled.split('\n').every((line) => line.length < 400))
+})
+
+test('filling empty compare cells is idempotent and never invents a claim (1.0.1)', () => {
+  const table = fillTable([
+    '| Spring AI | 无证据 | 无证据 | 无证据 |',
+    '| bun | 无证据 | 无证据 | 无证据 |',
+  ])
+  const once = fillEmptyCompareCells(table, fillClusters(), ['Spring AI', 'bun'])
+  assert.equal(fillEmptyCompareCells(once, fillClusters(), ['Spring AI', 'bun']), once, 'second pass changes nothing')
+  // bun has no claim at all: 无证据 stays instead of borrowing Spring AI's text.
+  const bun = once.split('\n').find((line) => line.startsWith('| bun |'))
+  assert.equal(bun, '| bun | 无证据 | 无证据 | 无证据 |')
+  // A table without the heading is returned untouched.
+  assert.equal(fillEmptyCompareCells('## 结论\nok', fillClusters(), ['Spring AI']), '## 结论\nok')
+})
+
+test('a zero-evidence note matches the compare table it describes (1.0.1)', () => {
+  // The option owns a row: the note must not claim it was left out of the table.
+  const withRow = buildResult({
+    brief: fillTable(['| 豆包 | 无证据 | 无证据 | 无证据 |']),
+    sources: [], confidence: 'low', gaps: ['暂无官方价格页'], partial: false, depth: 'quick',
+    zeroEvidenceOptions: ['豆包'],
+    compareOptions: ['豆包'],
+    stats: { questionKind: 'selection', queries: 1, pagesFetched: 1, llmRounds: 1, elapsedMs: 5 },
+  })
+  assert.match(withRow.brief, /选项「豆包」在对比表中占位，但关键属性未取得（零证据）/)
+  assert.doesNotMatch(withRow.brief, /选项「豆包」在本轮证据中没有可用来源/)
+
+  // Merged row: 豆包 does appear in the table, so again "not compared" would be a lie.
+  const merged = buildResult({
+    brief: fillTable(['| qwen / 豆包 API | 无证据 | 无证据 | 无证据 |']),
+    sources: [], confidence: 'low', gaps: [], partial: false, depth: 'quick',
+    zeroEvidenceOptions: ['豆包'],
+    compareOptions: ['qwen', '豆包'],
+    stats: { questionKind: 'selection', queries: 1, pagesFetched: 1, llmRounds: 1, elapsedMs: 5 },
+  })
+  assert.match(merged.brief, /选项「豆包」在对比表中占位，但关键属性未取得（零证据）/)
+  assert.doesNotMatch(merged.brief, /选项「豆包」在本轮证据中没有可用来源/)
+
+  // No table at all: the note and the bullet both say it was not compared.
+  const noTable = buildResult({
+    brief: '## 方案对比\n不适用\n\n## 置信度\nlow',
+    sources: [], confidence: 'low', gaps: [], partial: false, depth: 'quick',
+    zeroEvidenceOptions: ['豆包'],
+    compareOptions: ['豆包'],
+    stats: { questionKind: 'selection', queries: 1, pagesFetched: 1, llmRounds: 1, elapsedMs: 5 },
+  })
+  assert.match(noTable.brief, /- 「豆包」：无证据，未纳入对比/)
+  assert.match(noTable.brief, /选项「豆包」在本轮证据中没有可用来源（零证据），未纳入对比/)
+})
+
+test('buildResult fills a compare table from clusters and cites the delivered source ids (1.0.1)', () => {
+  const table = fillTable(['| Spring AI | 无证据 | 无证据 | 无证据 |', '| LangChain4j | 无证据 | 无证据 | 无证据 |'])
+  const sources = [
+    { id: 'S1', url: 'https://docs.spring.io/spring-ai/reference/chatclient.html', title: 'ChatClient' },
+    { id: 'S2', url: 'https://docs.spring.io/spring-ai/reference/getting-started.html', title: 'Getting started' },
+    { id: 'S3', url: 'https://docs.spring.io/spring-ai/reference/intro.html', title: 'Introduction' },
+    { id: 'S4', url: 'https://docs.langchain4j.dev/integrations/', title: 'Integrations' },
+    { id: 'S5', url: 'https://docs.langchain4j.dev/tutorials/', title: 'Tutorials' },
+  ]
+  const result = buildResult({
+    brief: table, sources, confidence: 'medium', gaps: [], partial: false, depth: 'quick',
+    clusters: fillClusters(),
+    compareOptions: ['Spring AI', 'LangChain4j'],
+    stats: { questionKind: 'selection', queries: 1, pagesFetched: 5, llmRounds: 1, elapsedMs: 5 },
+  })
+  assert.ok(!/\| Spring AI \| 无证据 \|/.test(result.brief), result.brief)
+  assert.match(result.brief, /ChatClient 抽象[^|]*\[S\d\]/)
+  assert.match(result.brief, /适用于快速搭建原型[^|]*\[S\d\]/)
+  // The citation must land in the reference list, so [S#] cannot dangle.
+  for (const match of result.brief.matchAll(/\[(S\d+)\]/g)) {
+    assert.ok(result.sources.some((source) => source.id === match[1]), match[1])
+  }
 })
