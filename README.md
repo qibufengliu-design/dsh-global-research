@@ -206,3 +206,26 @@ Get-ChildItem test\*.test.js | ForEach-Object { node $_.FullName }
 - **证据分级**：参考条目标注 官方 / 论文 / 仓库 / 论坛 / 百科 / 网页；`high` 置信度要求至少 2 个独立一手来源。
 - **论文源**：新增 OpenAlex 垂直源（免 key），命中带年份与被引次数。
 - **检索质量**：中文长问句额外切 ≤12 字片段做 query；planner 没给英文 query 时自动补拉丁词 query。
+
+## 安装与迁移到另一台机器
+
+本项目是 DSH bundle 插件，不发布到 npm，按“目录 + profile patch”安装：
+
+1. 把本目录放到新机器的插件工作区（例如 `D:\\Total\\dsh-global-research`）。
+2. 在 profile 的 `cordis.patch.yml` 里加一行（`keys` 留空即可先用免费引擎）：
+
+```yaml
+- id: global-research
+  name: "@local/dsh-global-research"
+  config:
+    engines:
+      tavily: true
+    keys:
+      tavily: "tvly-替换成你自己的key"
+    debugStats: false
+```
+
+3. 用 `plugin_manager.install_bundle` 指向该目录，或把 profile 依赖指向本地路径（`link:D:/Total/dsh-global-research`）。
+4. **完全重启桌面应用**（Ctrl+R / F5 只切会话，不重新加载页面）；重启后在输入框右侧能看到「深度」胶囊、插件详情页里能看到「研究深度」设置。
+
+API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会退回 `ctx-web` 与 DuckDuckGo（后者在本机常被 challenge 挡住，因此推荐至少配一个 Tavily key）。
