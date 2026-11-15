@@ -1,9 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  appendConflictSection, appendReferences, appendStats, assignSourceIds, buildResult, computeConfidence,
-  ensureSections, fallbackBrief, gradeSource, validateCitations,
+  appendConflictSection, appendReferences, appendRetrievalFlow, appendStats, assignSourceIds, buildResult,
+  computeConfidence, ensureSections, fallbackBrief, gradeSource, validateCitations,
 } from '../lib/brief.js'
+import { findSelfContradictions } from '../lib/assertions.js'
 import { autoDepth, buildQueries, groupEvidence, resolveDepth, shortFragments } from '../lib/pipeline.js'
 
 test('references carry an evidence grade so a blog does not look like a regulation', () => {
@@ -422,4 +423,123 @@ test('the 口径差异 note is inserted before citation renumbering so its ids s
   assert.equal(finalSources.length, 3)
   assert.match(brief, /口径差异：输出上限在不同对象上分别为 65536 tokens（\[S2\]） \/ 131072 tokens（\[S3\]）/m)
   assert.equal((brief.match(/\[S1\]/g) ?? []).length, 1)
+})
+
+test('the retrieval funnel line reports real counts and sits before 参考', () => {
+  const clusters = [cluster('Node 22 is LTS', ['https://nodejs.org/en/about/releases', 'https://github.com/nodejs/release'])]
+  const sources = assignSourceIds(clusters)
+  const stats = {
+    identified: 20, deduped: 12, readable: 9, adopted: sources.length,
+    queries: 6, pagesFetched: 9, clusters: 14, elapsedMs: 73000,
+  }
+  const result = buildResult({
+    brief: '## 结论\nok [S1]', sources, confidence: 'medium', gaps: [], partial: false, depth: 'standard', stats,
+  })
+  assert.match(result.brief, /^> 检索流程：识别 20 篇 · 去重后 12 篇 · 可读 9 篇 · 采用 2 篇$/m)
+  // It introduces 参考, so it must appear before it and only once.
+  assert.ok(result.brief.indexOf('> 检索流程：') < result.brief.indexOf('## 参考'))
+  assert.equal((result.brief.match(/检索流程：/g) ?? []).length, 1)
+  const rendered = buildResult({
+    brief: result.brief, sources: [], confidence: 'medium', gaps: [], partial: false, depth: 'standard', stats,
+  })
+  assert.equal((rendered.brief.match(/检索流程：/g) ?? []).length, 1)
+  // Stats objects from older runs carry no funnel counters: say nothing rather than guess.
+  const legacy = buildResult({
+    brief: '## 结论\nok', sources: [], confidence: 'medium', gaps: [], partial: false, depth: 'standard',
+    stats: { queries: 6, pagesFetched: 9, clusters: 14, elapsedMs: 73000 },
+  })
+  assert.doesNotMatch(legacy.brief, /检索流程：/)
+})
+
+test('the funnel line is printed in the quick profile and marks reuse on a resumed run', () => {
+  const stats = { identified: 4, deduped: 4, readable: 3, adopted: 1, queries: 2, pagesFetched: 3, clusters: 2, elapsedMs: 12000 }
+  const quick = buildResult({
+    brief: '## 结论\nok', sources: [], confidence: 'low', gaps: [], partial: false, depth: 'quick', stats,
+  })
+  assert.match(quick.brief, /^> 检索流程：识别 4 篇 · 去重后 4 篇 · 可读 3 篇 · 采用 1 篇$/m)
+  // A resumed run reports this round's N/M but keeps the totals for readable/adopted.
+  const resumed = appendRetrievalFlow('## 结论\nok', { ...stats, readable: 12, adopted: 5, reusedPages: 9, resumed: true })
+  assert.match(resumed, /^> 检索流程：识别 4 篇 · 去重后 4 篇 · 可读 12 篇 · 采用 5 篇（续跑：复用 9 页）$/m)
+})
+
+test('冲突 keeps its heading and gains 事实冲突/口径差异/来源自相矛盾 subsections', () => {
+  const clusters = [disputedCluster('Node 22 输出上限', ['https://nodejs.org/en/about/releases', 'https://github.com/nodejs/release'])]
+  assignSourceIds(clusters)
+  const numeric = [{
+    attribute: '输出上限',
+    unitMismatch: false,
+    values: [
+      { value: '384K', unit: 'tokens', source: 'S1' },
+      { value: '256K', unit: 'tokens', source: 'S2' },
+    ],
+  }]
+  const brief = ensureSections(
+    '## 结论\nx [S1][S2]\n\n## 置信度\nmedium\n\n## 未解决\n- 无',
+    'medium', [], clusters, null, numeric,
+  )
+  assert.match(brief, /^## 存在冲突$/m)
+  assert.match(brief, /^### 事实冲突\n- 输出上限：384K tokens（\[S1\]） · 256K tokens（\[S2\]）\n- Node 22 输出上限（支持）— \[S1\] nodejs\.org\n- Node 22 输出上限（反驳）— \[S2\] github\.com$/m)
+  assert.match(brief, /^### 口径差异\n- 无$/m)
+  assert.match(brief, /^### 来源自相矛盾\n- 无$/m)
+  assert.ok(brief.indexOf('## 存在冲突') < brief.indexOf('### 事实冲突'))
+  assert.ok(brief.indexOf('### 事实冲突') < brief.indexOf('### 口径差异'))
+  assert.ok(brief.indexOf('### 口径差异') < brief.indexOf('### 来源自相矛盾'))
+})
+
+test('口径差异 holds entity and unit differences with a reason instead of calling them facts', () => {
+  const clusters = [disputedCluster('Node 22 输出上限', ['https://nodejs.org/en/about/releases', 'https://github.com/nodejs/release'])]
+  assignSourceIds(clusters)
+  const divergences = [divergence('输出上限', { value: '65536', unit: 'tokens', source: 'S1' }, { value: '131072', unit: 'tokens', source: 'S2' })]
+  const mismatched = [{
+    attribute: '输出价格',
+    unitMismatch: true,
+    values: [
+      { value: '0.2', unit: '元', source: 'S3' },
+      { value: '0.03', unit: '美元', source: 'S4' },
+    ],
+  }]
+  const brief = ensureSections(
+    '## 结论\nx [S1]\n\n## 置信度\nmedium\n\n## 未解决\n- 无',
+    'medium', [], clusters, null, mismatched, divergences,
+  )
+  assert.match(brief, /^### 口径差异\n- 输出上限：65536 tokens（\[S1\]） \/ 131072 tokens（\[S2\]）（对象不同，不可直接比较）\n- 输出价格：0\.2 元（\[S3\]） \/ 0\.03 美元（\[S4\]）（单位不同：元 \/ 美元，不可直接比较）$/m)
+  // An incomparable unit is a scope problem, not a factual contradiction.
+  const factBlock = brief.slice(brief.indexOf('### 事实冲突'), brief.indexOf('### 口径差异'))
+  assert.doesNotMatch(factBlock, /输出价格/)
+  // The scope lines replace the legacy 未解决 note instead of duplicating it.
+  assert.doesNotMatch(brief, /^- 口径差异：/m)
+})
+
+test('a page that states two different values for one property is a 来源自相矛盾', () => {
+  const quote = '输出上限：384K tokens。输出上限：256K tokens。'
+  const items = [{
+    id: 'S1',
+    url: 'https://nodejs.org/en/about/previous-releases',
+    title: 'Node releases',
+    publishedAt: '2026-01-01',
+    claim: quote,
+    quote,
+  }]
+  const contradictions = findSelfContradictions(items)
+  assert.equal(contradictions.length, 1)
+  assert.equal(contradictions[0].attribute, '输出上限')
+  assert.deepEqual(contradictions[0].values.map((entry) => `${entry.value} ${entry.unit}`), ['384K tokens', '256K tokens'])
+  const brief = appendConflictSection(
+    '## 结论\nx [S1]\n\n## 置信度\nmedium\n\n## 未解决\n- 无', [], [], [], contradictions,
+  )
+  assert.match(brief, /^## 存在冲突$/m)
+  assert.match(brief, /^### 事实冲突\n- 无$/m)
+  assert.match(brief, /^### 来源自相矛盾\n- 输出上限：384K tokens \/ 256K tokens（\[S1\] 同一页面内说法不一致）$/m)
+  // Three values on one page are a table, not a self-contradiction.
+  assert.equal(findSelfContradictions([{ ...items[0], quote: '输出上限：384K tokens。输出上限：256K tokens。输出上限：128K tokens。' }]).length, 0)
+})
+
+test('when all three conflict kinds are empty the brief grows no conflict section', () => {
+  const plain = buildResult({
+    brief: '## 结论\nok', sources: [], confidence: 'low', gaps: [], partial: false, depth: 'standard',
+    stats: { identified: 1, deduped: 1, readable: 1, adopted: 0 },
+  })
+  assert.doesNotMatch(plain.brief, /## 存在冲突/)
+  assert.doesNotMatch(plain.brief, /^### /m)
+  assert.doesNotMatch(appendConflictSection('## 结论\nx\n\n## 置信度\nmedium', [], [], [], []), /存在冲突/)
 })
