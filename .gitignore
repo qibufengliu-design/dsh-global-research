@@ -24,3 +24,4 @@ Thumbs.db
 tmp-*
 probe-*.mjs
 .tmp/
+.tmp-*       # 测试重定向日志（.tmp-testout.txt 之类）
