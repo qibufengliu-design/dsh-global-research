@@ -68,6 +68,10 @@ Node 22 的 EOL 是 **2027-04-30** [S1]；新项目建议 Node 24 [S2]。
 - [S1] github.com — https://github.com/nodejs/Release
 - [S2] nodejs.org — https://nodejs.org/en/blog/v24`
 
+const BRIEF_WITH_STATS = `${BRIEF}
+
+> 本次检索：6 个查询 · 9 个页面 · 14 条证据 · 73 秒（标准档）`
+
 function resultBlock(extra = {}) {
   return {
     kind: 'tool-result',
@@ -91,6 +95,25 @@ test('research card parses confidence, source count and duration', () => {
   assert.match(json, /73s/)
   assert.match(json, /Node 22 的 EOL 是/)
   assert.doesNotMatch(json, /\[S1\]/)
+})
+
+test('research card renders the run-stats row parsed from the brief', () => {
+  const Card = loadCard()
+  const json = JSON.stringify(Card({
+    phase: 'result',
+    block: resultBlock({ content: [{ type: 'text', text: BRIEF_WITH_STATS }] }),
+  }))
+  assert.match(json, /6 查询/)
+  assert.match(json, /9 页面/)
+  assert.match(json, /14 条证据/)
+  assert.match(json, /73 秒/)
+})
+
+test('research card omits the run-stats row for older briefs', () => {
+  const Card = loadCard()
+  const json = JSON.stringify(Card({ phase: 'result', block: resultBlock() }))
+  assert.doesNotMatch(json, /条证据/)
+  assert.doesNotMatch(json, /个页面/)
 })
 
 test('research card shows a failure row for errored calls', () => {

@@ -80,6 +80,21 @@ window.__ModuleLoader__.load({
       return undefined
     }
 
+    // The host appends a fixed `> 本次检索：…` line after 参考. Briefs rendered
+    // before this feature (or older cached results) have none: show no row then.
+    function runStatsOf(text) {
+      const match = /^>\s*本次检索：\s*(\d+)\s*个查询\s*·\s*(\d+)\s*个页面\s*·\s*(\d+)\s*条证据\s*·\s*(\d+)\s*秒(?:（([^）]*)）)?/m.exec(text)
+      if (!match) return undefined
+      const stats = {
+        queries: Number(match[1]),
+        pages: Number(match[2]),
+        evidence: Number(match[3]),
+        seconds: Number(match[4]),
+      }
+      if (!stats.queries && !stats.pages && !stats.evidence) return undefined
+      return stats
+    }
+
     function Header(props) {
       const clickable = typeof props.onToggle === 'function'
       return h('div', {
@@ -177,6 +192,7 @@ window.__ModuleLoader__.load({
       const confidence = confidenceOf(text)
       const sources = sourceCount(text)
       const seconds = elapsedOf(block)
+      const runStats = runStatsOf(text)
       const meta = [sources > 0 ? `${sources} 个来源` : undefined,
         seconds ? `${seconds}s` : undefined].filter(Boolean).join(' · ')
       const conclusion = plain(section(text, '结论'))
@@ -189,6 +205,24 @@ window.__ModuleLoader__.load({
           toggleLabel: open ? '收起' : '展开',
           onToggle: () => setOpen(!open),
         }),
+        runStats ? h('div', {
+          key: 'stats',
+          style: {
+            display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+            font: MONO, color: CAPTION, fontSize: 11,
+          },
+        }, [
+          `${runStats.queries} 查询`,
+          `${runStats.pages} 页面`,
+          `${runStats.evidence} 条证据`,
+          `${runStats.seconds} 秒`,
+        ].map((label) => h('span', {
+          key: label,
+          style: {
+            border: BORDER, borderRadius: 999, padding: '0 7px',
+            background: 'transparent', whiteSpace: 'nowrap',
+          },
+        }, label))) : null,
         h('div', {
           key: 'c',
           style: {

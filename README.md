@@ -50,6 +50,8 @@ plugin_manager set_plugin target: include:global-research enabled: true
 
 返回对象含 `brief`（Markdown）、`confidence`、`sources`、`gaps`、`partial`、`depthUsed`、`stats`；工具界面只展示简报。
 
+简报末尾（「参考」之后）固定带一行运行统计，例如 `> 本次检索：6 个查询 · 9 个页面 · 14 条证据 · 73 秒（标准档）`——不用打开 `debugStats` 也能看到这次查了多少、抓了多少、用了多久；同一结果重复渲染不会出现两行。Web 卡片会把这一行解析成标题下方的小字徽章。
+
 ## 预算
 
 | depth | queries | pages | LLM 轮 | 补搜轮 | 墙钟 |
@@ -78,7 +80,7 @@ plugin_manager set_plugin target: include:global-research enabled: true
 | `useJinaFallback` | `false` | JS 重站点用 `r.jina.ai` 兜底取正文 |
 | `timeoutMs` | `120000` | 工具级超时下限；实际取 `max(配置, deep 的 300s) + 20s`，避免 deep 被工具超时先杀掉 |
 | `verboseLog` | `false` | 打印引擎失败、重试等日志 |
-| `debugStats` | `false` | 在简报末尾附「检索统计」一行（引擎、query 数、抓取页数、官方直取、域名、耗时），排查召回问题时用 |
+| `debugStats` | `false` | 在简报末尾额外附「调试统计」一行（引擎、垂直源、官方直取、回补、域名），排查召回问题时用；查询数/页数/证据数/耗时已固定显示在「本次检索」行，不在这里重复 |
 | `cache.enabled` | `true` | 同一问题（question/depth/focus/outputLanguage 全同）在 TTL 内复用上一次简报，不再花检索与模型额度；`partial` 结果不入缓存 |
 | `cache.ttlMinutes` | `60` | 缓存有效期（1–1440 分钟） |
 | `cache.maxEntries` | `16` | 进程内最多保留多少条结果（LRU 淘汰） |
@@ -152,6 +154,7 @@ config:
 `research` 的调用结果在 Web 端不再显示成通用工具行，而是一张卡片（`client.js`，通过 client slot `tool.call.toolview` 注册 key `research`）：
 
 - 标题行：置信度徽章（高/中/低，绿/黄/红）、来源数、耗时（`block.meta.elapsedMs`）。
+- 标题行下方：一行小字徽章（本次查询数 / 抓取页数 / 证据条数 / 耗时），从简报末尾的「本次检索」行解析；老结果没有这行时不显示。
 - 正文：结论段前 3 行，去掉 `[S#]` 与 Markdown 标记，适合快速扫读。
 - 「展开」：显示完整简报纯文本；再点「收起」。
 - 运行中显示问题原文与「研究中…」；出错时显示红色失败行。
