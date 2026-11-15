@@ -227,17 +227,22 @@ test('rankBoosts is undefined without a preferred vertical and ordered otherwise
 })
 
 test('rankHits only reorders when a pack actually declares prefer', () => {
+  // 0.7.0: the tier term (forum −1, repo-doc +1) now separates these two on its
+  // own, so the fixture needs a legacy order the page shape alone cannot flip:
+  // a `/docs/` page first, then the forum hit, then the repo docs tree. The
+  // pack's github domain boost (+2) is what lifts the repo above the doc page.
   const hits = [
-    { url: 'https://stackoverflow.com/questions/1/node-lts', engines: new Set(['x']), rank: 1 },
-    { url: 'https://github.com/acme/widgets', engines: new Set(['x']), rank: 2 },
+    { url: 'https://example.com/docs/getting-started', engines: new Set(['x']), rank: 1 },
+    { url: 'https://stackoverflow.com/questions/1/node-lts', engines: new Set(['x']), rank: 2 },
+    { url: 'https://github.com/acme/widgets/tree/main/docs', engines: new Set(['x']), rank: 3 },
   ]
   const legacy = rankHits(hits, { question: '' }).map((hit) => hit.url)
   const boosted = rankHits(hits, {
     question: '',
     boosts: rankBoosts(resolveStrategy({ questionKind: 'tech-selection', depth: 'standard' })),
   }).map((hit) => hit.url)
-  assert.equal(legacy[0], 'https://stackoverflow.com/questions/1/node-lts')
-  assert.equal(boosted[0], 'https://github.com/acme/widgets')
+  assert.equal(legacy[0], 'https://example.com/docs/getting-started')
+  assert.equal(boosted[0], 'https://github.com/acme/widgets/tree/main/docs')
   // concept/legal declare no preference, so the ranking is untouched.
   assert.deepEqual(
     rankHits(hits, { question: '', boosts: rankBoosts(resolveStrategy({ questionKind: 'concept', depth: 'standard' })) }).map((hit) => hit.url),

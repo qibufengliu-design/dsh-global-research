@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { runResearch, groupEvidence, looksLikeFollowUp, extractEvidence, pickDocBases } from '../lib/pipeline.js'
 import { downgradeConfidence } from '../lib/brief.js'
 import { resolveStrategy } from '../lib/strategy.js'
-import { rankHits } from '../lib/util.js'
+import { dedupeHits, rankHits } from '../lib/util.js'
 
 const selection = { provider: 'test', model: 'test-model' }
 
@@ -1252,4 +1252,86 @@ test('pickDocBases falls back to the generic root when no tag matches (0.6.8)', 
   const bases = pickDocBases(question, '', OFFICIAL_DOC_BASES(question))
   assert.equal(bases[0], 'https://docs.spring.io')
   assert.ok(!bases.includes('https://docs.spring.io/spring-boot'))
+})
+
+/* --------------------------------------------- 0.7.0 — evidence-tier slot */
+
+const TIER_QUESTION = 'Spring AI 和 LangChain4j 做 RAG 选型时该读哪份参考文档'
+// A concrete `/reference/` page — the kind of source regression A lost to repos.
+// Written without `www.` because normalizeUrl strips it before selection.
+const TIER_DOC_PAGE = 'https://baeldung.com/spring-ai/reference/chatclient'
+const TIER_REPOS = [
+  'https://github.com/acme/spring-ai-rag/blob/main/src/main/java/ChatClientConfig.java',
+  'https://github.com/acme/langchain4j-rag/blob/main/src/main/java/EmbeddingStoreConfig.java',
+  'https://github.com/acme/rag-advisor/blob/main/src/main/java/RetrievalAdvisor.java',
+]
+const TIER_TITLES = ['ChatClientConfig.java', 'EmbeddingStoreConfig.java', 'RetrievalAdvisor.java']
+
+function tierHits(engine, extraUrls = []) {
+  return [...TIER_REPOS, ...extraUrls].map((url, index) => ({
+    url,
+    // A distinct title, or dedupeHits folds the doc page into the same-titled repo file.
+    title: url === TIER_DOC_PAGE ? 'ChatClient reference' : TIER_TITLES[index % TIER_TITLES.length],
+    snippet: 'spring ai rag vector store reference',
+    engine,
+    rank: index + 1,
+  }))
+}
+
+function tierEngines(extraUrls = []) {
+  return [
+    { name: 'fake', available: () => true, search: async () => tierHits('fake', extraUrls) },
+    // A second engine repeats the repo URLs: engine consensus (3 points per
+    // engine) is the term that used to be enough to carry repositories over the
+    // vendor doc page, and it is left in force so the slot has something to beat.
+    { name: 'fake2', available: () => true, search: async () => tierHits('fake2') },
+  ]
+}
+
+async function tierRun(extraUrls = []) {
+  const fetched = []
+  const config = baseConfig()
+  config.__engines = tierEngines(extraUrls)
+  config.__fetchPage = fakeFetcher(fetched)
+  const result = await runResearch({
+    question: TIER_QUESTION,
+    depth: 'quick',
+    strategy: resolveStrategy({ questionKind: 'tech-selection', depth: 'quick', question: TIER_QUESTION }),
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  return { fetched, result }
+}
+
+test('tech-selection keeps a page slot for a concrete doc page (0.7.0)', async () => {
+  // The plain ranking still puts the doc page last: three repo files, each
+  // corroborated by two engines, outscore it. Only the reserved slot can read it.
+  const ranked = rankHits(dedupeHits([...tierHits('fake', [TIER_DOC_PAGE]), ...tierHits('fake2')]), {
+    question: TIER_QUESTION,
+  }).map((hit) => hit.url)
+  assert.equal(ranked.length, 4)
+  assert.ok(ranked.slice(0, 2).every((url) => url.includes('github.com')), ranked.join(' | '))
+  assert.equal(ranked[ranked.length - 1], TIER_DOC_PAGE, ranked.join(' | '))
+
+  const { fetched } = await tierRun([TIER_DOC_PAGE])
+  assert.ok(fetched.includes(TIER_DOC_PAGE), fetched.join(' | '))
+  // A repo hit gave up its slot instead of the page being appended.
+  assert.ok(TIER_REPOS.some((url) => !fetched.includes(url)), fetched.join(' | '))
+})
+
+test('tech-selection without a doc-page candidate is not padded (0.7.0)', async () => {
+  const without = await tierRun()
+  const withDoc = await tierRun([TIER_DOC_PAGE])
+  // Same page budget: the doc page takes a repo slot, it never adds a page. If
+  // the slot rule padded the selection, the run that saw a doc page would fetch
+  // one more URL than the run that did not.
+  assert.equal(withDoc.fetched.length, without.fetched.length)
+  assert.ok(!without.fetched.includes(TIER_DOC_PAGE))
+  assert.ok(
+    without.fetched.every((url) => TIER_REPOS.includes(url)),
+    `no invented source: ${without.fetched.join(' | ')}`,
+  )
+  assert.ok(withDoc.fetched.includes(TIER_DOC_PAGE))
 })

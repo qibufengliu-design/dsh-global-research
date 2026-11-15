@@ -189,7 +189,7 @@ config:
 Get-ChildItem test\*.test.js | ForEach-Object { node $_.FullName }
 ```
 
-覆盖：URL 规范化与内容去重、预算、JSON 修复、引用校验、DDG 解析、引擎失败隔离与自动禁用、付费引擎解析与 key 来源、垂直源选择与解析（GitHub/arXiv/StackExchange/npm/HN/PyPI，含垃圾 payload、纯中文 query 跳过、SE 标签映射与 intitle 回退、单源失败隔离）、管线十步（假引擎/假抓取/假模型，含检索计划优先与 ghost citation 清理）、阶段耗时（六个阶段的整数毫秒、快跑不进简报）、官方链接挖掘与预算边界、EUR-Lex Cellar 映射与回退、EUR-Lex 摘要页/搜索页降权与 ELI 原文优先、EU 站点语言前缀归一、法规问题回补预留页位、无一手源时回补强制官方域名 query、垂直源正文兜底与选择位保护、配置校验（类型强转/夹取/未知键 warning）、域名信任名单与黑名单过滤、缓存（key 归一、TTL、LRU、命中不调模型、focus 不同绕过、可关闭）、client 卡片解析（置信度徽章/来源数/耗时/失败与运行中状态/无分段兜底/阶段 chip 与缺段不渲染）、阶段摘要格式（>0.5s、最多 4 段、按阶段顺序输出）、`apply` 注册、skill 注册与端到端 execute、sourcePlan 通道声明、sitemap 解析与关键词打分、sitemap 预算/失败隔离、sitemap base 相对发现与内容校验、跨主机 `<loc>` 改写与 `docHostRewrite` 开关、按题选择文档 base（`pickDocBases`）、用户提供资料作为证据。共 290 例。
+覆盖：URL 规范化与内容去重、预算、JSON 修复、引用校验、DDG 解析、引擎失败隔离与自动禁用、付费引擎解析与 key 来源、垂直源选择与解析（GitHub/arXiv/StackExchange/npm/HN/PyPI，含垃圾 payload、纯中文 query 跳过、SE 标签映射与 intitle 回退、单源失败隔离）、管线十步（假引擎/假抓取/假模型，含检索计划优先与 ghost citation 清理）、阶段耗时（六个阶段的整数毫秒、快跑不进简报）、官方链接挖掘与预算边界、EUR-Lex Cellar 映射与回退、EUR-Lex 摘要页/搜索页降权与 ELI 原文优先、EU 站点语言前缀归一、法规问题回补预留页位、无一手源时回补强制官方域名 query、垂直源正文兜底与选择位保护、配置校验（类型强转/夹取/未知键 warning）、域名信任名单与黑名单过滤、缓存（key 归一、TTL、LRU、命中不调模型、focus 不同绕过、可关闭）、client 卡片解析（置信度徽章/来源数/耗时/失败与运行中状态/无分段兜底/阶段 chip 与缺段不渲染）、阶段摘要格式（>0.5s、最多 4 段、按阶段顺序输出）、`apply` 注册、skill 注册与端到端 execute、sourcePlan 通道声明、sitemap 解析与关键词打分、sitemap 预算/失败隔离、sitemap base 相对发现与内容校验、跨主机 `<loc>` 改写与 `docHostRewrite` 开关、按题选择文档 base（`pickDocBases`）、证据档位（`sourceTier` 24 个 URL 的档位表与 `doc-page > repo-doc > repo-code` 排序）、tech-selection 的 doc-page 槽位与无候选不填充、用户提供资料作为证据。共 294 例。
 
 ## 真实网络 e2e
 
@@ -406,6 +406,26 @@ API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会
 - 万一过期页仍进了「## 参考」（全页过期或已被采用），该行行尾标 `（已过期，仅作参考）`。
 
 ## 更新日志
+
+### 0.7.0（2026-11-15）
+
+- **证据排序层**：`lib/util.js` 新增 `sourceTier(url)`，只按 URL 的形状判定这一页是什么证据，返回 `doc-page` | `doc-index` | `repo-doc` | `repo-code` | `forum` | `blog` | `other`：
+
+  | 档位 | 判定 | 排序权重 |
+  | --- | --- | --- |
+  | `doc-page` | 文档站的具体页：路径段 ≥2 且含 `/reference/`、`/api/`、`/docs/`、`/guide/`、`/guides/`、`/tutorials/`、`/manual/`、`/learn/`；或 `docs.*` 一类文档主机上 ≥2 段的页（`docs.python.org/3/library/json.html`） | `+4` |
+  | `doc-index` | 文档站根、只有一段路径的文档页 | `+2` |
+  | `repo-doc` | `github.com` 的 `blob/tree`，且是 `.md/.mdx/.adoc/.rst` 或路径含 `/docs/` | `+1` |
+  | `repo-code` | `github.com` 的 `blob` 源码文件（`.java .kt .py .ts .js .tsx .jsx .go .rs .rb .php .cs .scala .c .h .cpp`） | `−2` |
+  | `forum` | `stackoverflow.com`、`news.ycombinator.com`、`reddit.com`、`*.discourse.*` | `−1` |
+  | `blog` | 路径含 `/blog/`、`/news/`、`/press/`、`/changelog/` | `−2` |
+  | `other` | 其余（含仓库首页、站点根之外的普通页、非法 URL） | `0` |
+
+  判定顺序是 github → forum → doc-page → blog → 文档主机 → doc-index：仓库里的 `docs/*.md` 仍算仓库文档而不是厂商文档页，`spring.io/news` 仍算公告而不是文档索引。
+- **`rankHits` 叠加档位权重**：原有官方域名 `+2`、github 相关性闸门 `+2`、stale `−3`、站点根 `−4`、EUR-Lex `±2` 全部保留，档位分加在官方分后面（厂商文档页既是官方又是文档页，两个理由都该计分）。效果是「具体 API/参考页」不再被引擎票数决定：构造命中里 `docs.spring.io/spring-ai/reference/api/chatclient.html`（1 个引擎）得 **13.8**，`github.com/…/ChatClient.java`（2 个引擎、域名可信、仓库名命中问题）得 **9.9**，领先 3.9；去掉档位项则是 9.8 : 11.9，仓库反超 2.1——这正是回归 A 里"官方文档进得了候选却压不过仓库"的数值来源。
+- **Step 4 槽位保护**：`strategy.kind`（或 `questionKind`）属于 `tech-selection`、`learning`、`compare` 之一，或 `mode` 是 `compare` 时，只要候选里存在 `doc-page`，`selected` 里至少保留 1 条：先换掉 `repo-code` 位（把文档挤出去的就是它），否则换最后一个非 doc-page 位，两个 vertical 保护位不动。没有 doc-page 候选时不做任何填充——是**替换**不是追加，页预算不变。
+- 回归依据：真实网络回归 A（RAG 选型）8 条采用来源里 github 5 条、docs.spring.io 2 条、langchain4j 1 条。
+- 测试总数 294（新增 util 2：24 个 URL 的档位表、`doc-page > repo-doc > repo-code` 排序；pipeline 2：tech-selection 保留 doc-page 槽位、无 doc-page 候选时不填充；另修 strategy-packs 的旧排序夹具——`forum −1` 现在会改变那两条 URL 的先后）。
 
 ### 0.6.8（2026-11-15）
 

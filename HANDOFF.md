@@ -2,7 +2,7 @@
 
 ## 一句话状态
 
-插件可日常使用（P0–P8 + 0.6.x 全部完成），**已推送到 GitHub**（`main` = `73e9722` 之后随 0.6.8 再推一次）。
+插件可日常使用（P0–P8 + 0.6.x + 0.7.0 全部完成），**已推送到 GitHub**（`main` 随 0.6.8 推过；0.7.0 尚未推）。
 
 ## 仓库与版本
 
@@ -18,7 +18,8 @@
   - `0e5d941` 0.6.6 过期源不得充当论据
   - `73e9722` 0.6.7 base 相对 sitemap 发现（docs.spring.io/spring-ai 等终于能爬）
   - `0b71c46` 0.6.8 sitemap 跨主机改写 + 按题选文档 base
-- 测试：17 个文件逐个跑，**290 例全绿**（`node --test test/` 在沙箱会 EPERM，只能逐文件跑）
+  - `HASH_0_7_0` 0.7.0 证据排序层：具体 API/参考页排在仓库源码之前
+- 测试：17 个文件逐个跑，**294 例全绿**（`node --test test/` 在沙箱会 EPERM，只能逐文件跑）
 
 ## 推送
 
@@ -38,6 +39,7 @@ git -c http.sslBackend=openssl push origin main
 3. **可审计的过程行**：`> 检索流程：识别 N 篇 · 去重后 M 篇 · 可读 K 篇 · 采用 J 篇 · 官方采用 x/y`。
 4. **冲突三分**：事实冲突 / 口径差异 / 来源自相矛盾，不再把"不同口径"当成"事实矛盾"。
 5. **旧源降权**：标题含"已过期/不再维护/archived"的降 3 分；sitemap 选页优先 `/docs/ /reference/ /guides/`，避开 `/blog/`；`lastmod` 超 3 年再降权。
+6. **证据排序层**（0.7.0）：`sourceTier(url)` 给每页分档（doc-page +4 / doc-index +2 / repo-doc +1 / repo-code −2 / forum −1 / blog −2），`rankHits` 叠加档位分；tech-selection / learning / compare 下还留一个 doc-page 槽位。回归 A 里「8 条采用 5 条是仓库」的问题由此修掉。
 
 ## 已知缺口（不是 bug，是数据/结构限制）
 
@@ -47,6 +49,6 @@ git -c http.sslBackend=openssl push origin main
 
 ## 下次接着做
 
-- 推送 6 个提交；
+- 推送本地提交（0.7.0 之后又多 1 个）；
 - 可选：`text` 参数做 UI 入口、"某选项零证据"显式提示、缓存落盘。
 - 运行手册与细节：`D:\Total\docs\superpowers\specs\2026-11-15-regression-0.6.md`、`2026-11-15-p5-research-hardening.md`、`2026-11-15-cross-domain-scan.md`。

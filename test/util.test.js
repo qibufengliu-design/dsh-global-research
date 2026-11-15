@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   Budget, BudgetExceeded, configureDomainTrust, decodeEntities, dedupeHits, domainTrust,
   evidenceAgeDays, htmlToText, isBlockedDomain, isOfficialDomain, jaccard, jsonSafe, normalizeUrl,
-  parseLooseJson, rankHits, truncate, canonicalKey, extractUrls, looksStale,
+  parseLooseJson, rankHits, truncate, canonicalKey, extractUrls, looksStale, sourceTier,
 } from '../lib/util.js'
 
 test('vendor documentation and price pages count as official sources (0.6.3)', () => {
@@ -230,4 +230,71 @@ test('rankHits prefers the EUR-Lex act over its summary/search pages and demotes
   const landingIndex = ranked.findIndex((hit) => /index_en/.test(hit.url))
   assert.ok(eliIndex < summaryIndex, ranked.map((hit) => hit.url).join(' | '))
   assert.ok(summaryIndex < landingIndex, ranked.map((hit) => hit.url).join(' | '))
+})
+
+/* ---------------------------------------------- 0.7.0 — evidence tiers */
+
+test('sourceTier names the kind of evidence a page is (0.7.0)', () => {
+  const cases = [
+    // Concrete documentation pages: the page that states the API.
+    ['https://docs.spring.io/spring-boot/3.4/reference/web/servlet.html', 'doc-page'],
+    ['https://docs.spring.io/spring-ai/reference/api/chatclient.html', 'doc-page'],
+    ['https://nodejs.org/docs/latest/api/fs.html', 'doc-page'],
+    ['https://example.com/docs/getting-started', 'doc-page'],
+    ['https://docs.python.org/3/library/json.html', 'doc-page'],
+    // Documentation index pages: a host root, or a single path segment.
+    ['https://docs.spring.io/', 'doc-index'],
+    ['https://react.dev/learn', 'doc-index'],
+    ['https://example.com/docs', 'doc-index'],
+    // GitHub: prose vs source, which is the distinction that matters for ranking.
+    ['https://github.com/spring-projects/spring-ai/blob/main/README.md', 'repo-doc'],
+    ['https://github.com/spring-projects/spring-ai/blob/main/docs/chatclient.adoc', 'repo-doc'],
+    ['https://github.com/spring-projects/spring-ai/tree/main/docs', 'repo-doc'],
+    ['https://github.com/spring-projects/spring-ai/blob/main/src/main/java/ChatClient.java', 'repo-code'],
+    ['https://github.com/acme/widgets/blob/main/src/widget.ts', 'repo-code'],
+    // Q&A and social: an answer, not a document.
+    ['https://stackoverflow.com/questions/1/node-lts', 'forum'],
+    ['https://news.ycombinator.com/item?id=1', 'forum'],
+    ['https://www.reddit.com/r/java/comments/x/spring/', 'forum'],
+    ['https://meta.discourse.org/t/spring-ai-rag/1', 'forum'],
+    // Announcements: dated news, never the API contract.
+    ['https://spring.io/blog/2024/05/20/spring-ai-1-0', 'blog'],
+    ['https://example.com/changelog/1.2.3', 'blog'],
+    // Everything else, including a repo landing page and malformed input.
+    ['https://spring.io/projects/spring-boot', 'other'],
+    ['https://github.com/spring-projects/spring-ai', 'other'],
+    ['https://example.com/pricing', 'other'],
+    ['not a url', 'other'],
+    ['ftp://example.com/docs/a/b', 'other'],
+  ]
+  for (const [url, tier] of cases) assert.equal(sourceTier(url), tier, `${url} → ${sourceTier(url)}`)
+})
+
+test('rankHits puts the API reference page above the repository source file (0.7.0)', () => {
+  const docPage = {
+    url: 'https://docs.spring.io/spring-ai/reference/api/chatclient.html',
+    title: 'ChatClient :: Spring AI Reference',
+    snippet: 'spring ai rag chat client reference',
+    engines: new Set(['ctx-web']),
+    rank: 2,
+  }
+  // Two engines: engine consensus is the term that used to be enough to carry a
+  // repository source file over a vendor doc page, and it still has to lose.
+  const repoFile = {
+    url: 'https://github.com/spring-projects/spring-ai/blob/main/src/main/java/ChatClient.java',
+    title: 'ChatClient.java',
+    snippet: 'spring ai rag chat client source',
+    engines: new Set(['github', 'ctx-web']),
+    rank: 1,
+  }
+  const ranked = rankHits([repoFile, docPage], { question: 'spring ai rag chat client' })
+  assert.deepEqual(ranked.map((hit) => hit.url), [docPage.url, repoFile.url])
+  // A repo *document* sits between the two: doc-page (+4) > repo-doc (+1) > repo-code (−2).
+  const repoDoc = {
+    ...repoFile,
+    url: 'https://github.com/spring-projects/spring-ai/blob/main/docs/chatclient.md',
+    title: 'chatclient.md',
+  }
+  const ordered = rankHits([repoFile, repoDoc, docPage], { question: 'spring ai rag chat client' })
+  assert.deepEqual(ordered.map((hit) => sourceTier(hit.url)), ['doc-page', 'repo-doc', 'repo-code'])
 })
