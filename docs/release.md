@@ -17,7 +17,9 @@
 每版按顺序做完，缺一项不算发布：
 
 1. **实现 + 测试**：`node scripts/test-all.mjs` 全绿，新增行为必须有测试。测试总数以脚本输出为准，不要在任何文档里写死数字。
-2. **仓库整洁性与发布一致性**：`node scripts/check-docs.mjs`（必需文件、相对链接、CHANGELOG 版本条目、零依赖、package.json 元数据、Issue 表单结构、README 参数表与工具参数一致、JSON 示例可解析、文档里写到的 `node scripts/*.mjs` 与 `npm run <script>` 真实存在、没有密钥或本机绝对路径、`docs/` 都能从 README 链到、`.github/workflows/` 结构完整）与 `node scripts/check-release.mjs`（版本号与 CHANGELOG 小节、小节顺序、小节非空且不重复、README 预算表与 `lib/pipeline.js` 的 `DEPTH_PROFILES` 一致、文档里没有写死的测试例数）都要通过。
+2. **仓库整洁性与发布一致性**：`node scripts/check-docs.mjs`（必需文件、相对链接、CHANGELOG 版本条目、零依赖、package.json 元数据、Issue 表单结构、README 参数表与工具参数一致、JSON 示例可解析、文档里写到的 `node scripts/*.mjs` 与 `npm run <script>` 真实存在、没有密钥或本机绝对路径、`docs/` 都能从 README 链到、`.github/workflows/` 结构完整）与 `node scripts/check-release.mjs`（版本号与 CHANGELOG 小节、小节顺序、小节非空且不重复、`scripts/retrieval-check.mjs` 的 `VERSION` 与 `package.json` 同步、CHANGELOG 最上面一节不得比 `package.json` 旧、README 预算表与 `lib/pipeline.js` 的 `DEPTH_PROFILES` 一致、文档里没有写死的测试例数）都要通过。
+
+   发版节奏上「先写新小节、再 bump 版本号」是被允许的：CHANGELOG 最上面一节比 `package.json` 新时只打一条提醒（发布提交里把版本号同步上去即可），只有**比 `package.json` 旧**才算漂移、判失败。
 3. **真实网络回归**：至少跑一次 `retrieval-check`（A 题：RAG 选型）与一次 B/C 题；跑不动就记录「未运行 + 原因」，不允许编造结论。结论写到仓库外的工作笔记（本机在 `docs/superpowers/specs/` 同级的项目笔记目录），不提交进仓库。
 4. **版本号**：改 `package.json.version`。
 5. **CHANGELOG**：在 `CHANGELOG.md` 顶部新增 `## [x.y.z] - YYYY-MM-DD`，分类用 `Added` / `Changed` / `Fixed` / `Removed` / `Security`；写清「为什么」和实测数字，不只写「优化了 X」。
@@ -34,7 +36,7 @@
 
 - **只打 annotated tag**：`git tag -a vX.Y.Z -m "..."`。轻量 tag 不带作者/日期/说明，在 `git describe` 与 Release 页面上信息缺失。
 - **已推送的 tag 不移动、不删除**。发布后发现问题，按 SemVer 再发一个 PATCH，而不是 `git tag -f` + `push --force`。
-  - 历史例外：`v0.9.2` 是早期留下的轻量 tag，指向 `67a8613`，保留原样不重打；`v0.9.3` 指向材料粘贴区提交，紧随其后的修复另发 `v0.9.4`，见 CHANGELOG 里的说明。
+  - 历史例外：`v0.9.2` 是早期留下的轻量 tag，指向 `67a8613`，保留原样不重打；`v0.9.3` 指向材料粘贴区提交，紧随其后的修复另发 `v0.9.4`，见 CHANGELOG 里的说明；`v1.0.0` 也是轻量 tag（2026-11-16 由另一条会话直接 `git tag` 后推送，指向 `06171f5`），已生成的 Release 不受影响，同样**保留不重打**——1.0.1 起恢复只打 annotated。
 - tag 必须指向 `package.json.version` 相同的提交，`release.yml` 会在发布前校验，不一致直接失败。
 - tag 必须打在 `main` 上的提交：`release.yml` 用 `git merge-base --is-ancestor` 校验，分支上的提交即使打了 tag 也不会发版。
 - 不发布预发布版本（`v1.0.0-rc.1` 之类）时，不要用 `v` 之外的前缀。

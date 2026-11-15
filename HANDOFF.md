@@ -4,20 +4,23 @@
 
 `research` 工具已达 1.0.0：把一个开放问题做成**带 `[S#]` 引用、可核查、可复跑**的研究简报，零第三方依赖。0.6 → 1.0 的能力线已收口（策略引擎与取源通道、证据分级与排序、答案层、运维自检），**接口、简报结构、置信度口径、预算模型冻结**；做不到的部分集中写在 [LIMITATIONS.md](LIMITATIONS.md)。本版没有功能改动，代码等同 0.10.1（`bdf39ed`），只做版本收口与文档整理。
 
+**2026-11-16 01:1x 发布守门核实**：`refs/heads/main` = `06171f5`（`chore(release): 1.0.0`），tag `v1.0.0` 已推送并生成 Release id **446220562**（正文 2451 字，`node scripts/verify-release.mjs v1.0.0` 与 tag 上的 CHANGELOG 逐字一致）；三门槛 `check-docs` / `check-release` / `test-all` 全绿（19 个文件，实测 **417 例**——发布正文里写的 415 是发布那一刻的计数，之后 repo-hygiene 又加了 2 例）；CI 在 Node 20/22/24 + `windows smoke (node 22)` 上跑同一套测试，另有 CodeQL。<br>**注意**：`v1.0.0` 是**轻量 tag**（另一条线直接 `git tag` 后推送，与历史遗留的 `v0.9.2` 同类），1.0.1 起恢复「只打 annotated tag」的规矩；已推送的 tag 不移动、不删除，所以这个例外只记录不修正。
+
 ## 仓库与版本
 
 - 本地：`D:\Total\dsh-global-research`（git，`package.json.version` = `1.0.0`）
 - 远端：<https://github.com/qibufengliu-design/dsh-global-research>
 - 版本事实来源：`package.json.version`；`scripts/retrieval-check.mjs` 的 `VERSION` 与它同步（自检输出里会打印版本），其余地方不重复写版本号。
-- 历史：0.6.0 起按「一版一提交 + annotated tag `vX.Y.Z`」发布，`v0.9.0`–`v0.10.0` 均已推送到远端；`1.0.0` 的 tag 在发布清单第 9 步打（见 [docs/release.md](docs/release.md)）。
+- 历史：0.6.0 起按「一版一提交 + `vX.Y.Z` tag」发布，`v0.9.0`–`v1.0.0` 均已推送到远端，13 个版本各自有 Release 页（`v0.9.0`–`v0.9.4` 由 2026-11-15 用 API 补建，之后由 `release.yml` 在推 tag 时自动创建）。除 `v0.9.2`（历史遗留）与 `v1.0.0`（另一条线直接推的轻量 tag）外都是 annotated tag。
 - 变更历史全在 [CHANGELOG.md](CHANGELOG.md)（1.0.0 小节是 0.6 → 1.0 的能力线汇总），本文不复制。
 
 ## 怎么跑
 
 ```powershell
-node scripts/test-all.mjs        # 逐文件跑全部测试（19 个文件 / 415 例，2026-11-16 实测全绿）
-node scripts/check-docs.mjs      # 仓库整洁性：必需文件、链接、CHANGELOG、零依赖、参数表、无密钥/本机路径、workflow 结构
-node scripts/check-release.mjs   # 发布一致性：版本号 ↔ CHANGELOG 小节、预算表 ↔ DEPTH_PROFILES、文档里没有写死的例数
+node scripts/test-all.mjs        # 逐文件跑全部测试（19 个文件 / 417 例，2026-11-16 实测全绿）
+node scripts/check-docs.mjs      # 仓库整洁性：必需文件、链接、CHANGELOG、零依赖、参数表、JSON 示例、文档命令、密钥/本机路径、workflow 结构、docs 索引
+node scripts/check-release.mjs   # 发布一致性：版本号 ↔ CHANGELOG 小节 ↔ retrieval-check 的 VERSION、预算表 ↔ DEPTH_PROFILES、文档里没有写死的例数
+node scripts/verify-release.mjs vX.Y.Z   # 远端 Release 正文 ↔ 该 tag 上的 CHANGELOG 小节（逐字）
 node scripts/retrieval-check.mjs --question "…" --depth standard   # 真引擎检索/选页自检，不跑 LLM
 ```
 
@@ -97,4 +100,9 @@ node scripts/retrieval-check.mjs --question "…" --depth standard   # 真引擎
 
 ## 发布与推送
 
-发布清单（版本号、CHANGELOG、check-docs/check-release、打 annotated tag、推送、核对 Release 正文）见 [docs/release.md](docs/release.md)；仓库设置类操作（描述、topics、分支保护）在没装 `gh`、没有 `GITHUB_TOKEN` 的机器上只能网页手工做，不要假装已完成。推送需要能读到凭据库：Windows 上沙箱内 `git push` 会 `SEC_E_NO_CREDENTIALS`，做法（`-c http.sslBackend=openssl`、`--follow-tags`、推送后 `ls-remote` 核对 `refs/heads/main`）也写在那一页。
+发布清单（版本号、CHANGELOG、`check-docs` / `check-release`、打 annotated tag、推送、`verify-release` 核对 Release 正文）见 [docs/release.md](docs/release.md)。
+
+- **tag 规则**：只打 annotated tag；已推送的 tag 不移动、不删除；tag 必须打在 `main` 的发布提交上（`release.yml` 用 `git merge-base --is-ancestor` 校验）；tag 名必须等于 `v` + `package.json.version`。历史例外两个：`v0.9.2`、`v1.0.0` 是轻量 tag（都是另一条线直接 `git tag` 推的），只记录不修正。
+- **推送**：Windows 沙箱里 `git push` 读不到凭据库（`SEC_E_NO_CREDENTIALS 0x8009030e`），要带 `sandbox_permissions: danger-full-access` 并用 `git -c http.sslBackend=openssl -c credential.interactive=never push origin main`；偶发挂起时设 `GIT_TERMINAL_PROMPT=0`。推完用 GitHub API（`/branches/main`、`/releases`、`/actions/runs`）核对——沙箱里 `git ls-remote` 也常挂。
+- **远端仓库设置**：描述、7 个 topics、关闭 Wiki/Projects/Discussions、`main` 分支保护（必需检查 `test (node 20/22/24)` + `docs & metadata`、CODEOWNERS review、禁强推禁删）、被动关闭的两个 Dependabot PR，都是 2026-11-15 23:12 用一次性的 GitHub token 通过 API 配好的；执行记录在 `D:\Total\docs\superpowers\specs\2026-11-15-repo-hygiene-audit.md`。**那个 token 已在对话里明文暴露，必须撤销并换细粒度 token**；本机没有 `gh`、没有常驻 `GITHUB_TOKEN`，所以要改设置仍得网页手工或临时给 token。
+- `windows smoke (node 22)` 目前是观察项，**还没加入分支保护必需检查**（加它需要网页操作或临时 token）。
