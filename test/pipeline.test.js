@@ -2639,3 +2639,88 @@ test('every pricing host has a canonical price URL to open directly (0.9.7)', ()
   assert.equal(hasPricingSeedText(''), false)
   assert.equal(hasPricingSeedText(null), false)
 })
+
+// 0.9.8 — a price table reaches the pipeline as one flattened line per <tr>
+// (`</tr>` becomes a newline, every <td> a space). Each row is a few dozen
+// characters, far below the 60/120-character paragraph gate, so the vendor's own
+// price page (0.9.7: 豆包 seed, S5, 官方) produced zero evidence.
+const VOLC_PRICING_URL = 'https://www.volcengine.com/docs/82379/1099320'
+const VOLC_TITLE = '豆包大模型价格 - 火山引擎'
+
+function volcPricingPage(text, extra = {}) {
+  return { ...evidencePage(VOLC_PRICING_URL, text, extra), title: VOLC_TITLE }
+}
+
+test('a price table yields pricing evidence rows with model and both prices (0.9.8)', async () => {
+  const page = volcPricingPage([
+    '豆包大模型',
+    '模型 输入价格 输出价格',
+    'doubao-pro-32k 0.0008 元/千 tokens 0.002 元/千 tokens',
+    'doubao-lite-128k 0.0003 元/千 tokens 0.0006 元/千 tokens',
+  ].join('\n'))
+  const items = await extractEvidence([page], null, { client: { jsonCall: async () => [] } })
+  const rows = items.filter((item) => item.type === 'pricing')
+  // One item per model, not one blob for the table.
+  assert.equal(rows.length, 2)
+  assert.match(rows[0].claim, /doubao-pro-32k/)
+  assert.match(rows[0].claim, /输入 0\.0008/)
+  assert.match(rows[0].claim, /输出 0\.002/)
+  // The quote is the printed row, still grounded in the page text.
+  assert.match(rows[0].quote, /0\.0008 元\/千 tokens/)
+  assert.ok(page.text.includes(rows[0].quote))
+  // Pipe-separated and space-separated cells are the same row: the regexes anchor
+  // on the token unit, so the delimiter between cells does not matter.
+  const piped = volcPricingPage('doubao-pro-32k | 0.0008 元/千 tokens | 0.002 元/千 tokens')
+  const pipedRows = (await extractEvidence([piped], null, { client: { jsonCall: async () => [] } }))
+    .filter((item) => item.type === 'pricing')
+  assert.equal(pipedRows.length, 1)
+  assert.equal(pipedRows[0].claim, 'doubao-pro-32k 输入 0.0008 元/千 tokens，输出 0.002 元/千 tokens')
+  // The row quotes a codename while the option is the Chinese vendor name; the
+  // page title is what lets the option gate see that this page is about 豆包.
+  assert.ok(countOptionHits('豆包', groupEvidence(rows)) > 0)
+})
+
+test('a seeded page is price-scanned even off a vendor pricing host (0.9.8)', async () => {
+  const body = 'qwen-max 0.02 元/千 tokens 0.06 元/千 tokens'
+  const seeded = evidencePage('https://example.com/price', body, { via: 'seed' })
+  const seededItems = await extractEvidence([seeded], null, { client: { jsonCall: async () => [] } })
+  assert.equal(seededItems.filter((item) => item.type === 'pricing').length, 1)
+  // The very same body on an ordinary page is not first-party pricing.
+  const plainItems = await extractEvidence([evidencePage('https://example.com/blog', body)], null, { client: { jsonCall: async () => [] } })
+  assert.deepEqual(plainItems, [])
+})
+
+test('short navigation lines are never evidence (0.9.8)', async () => {
+  const nav = ['首页 | 产品 | 文档', '首页 | 产品 | 文档', '首页 | 产品 | 文档'].join('\n')
+  const items = await extractEvidence([evidencePage('https://example.com/', nav)], null, { client: { jsonCall: async () => [] } })
+  assert.deepEqual(items, [])
+})
+
+test('a long paragraph keeps the first evidence slot, price rows are appended (0.9.8)', async () => {
+  const paragraph = '火山方舟是字节跳动旗下的模型服务平台，提供模型推理、微调、批量推理与上下文缓存等能力，支持多地域部署与按量计费方式，适合企业与开发者使用。平台同时提供模型评测、安全审核与可观测能力，帮助团队把模型接入生产环境，并按调用量计费，也支持包年包月与预留实例等计费模式。'
+  assert.ok(paragraph.length >= 120, 'fixture must pass the standard paragraph gate')
+  const page = volcPricingPage(`${paragraph}\n\n模型 输入价格 输出价格\ndoubao-pro-32k 0.0008 元/千 tokens 0.002 元/千 tokens`)
+  const items = await extractEvidence([page], null, { client: { jsonCall: async () => [] } })
+  // Both kinds survive: the paragraph is not replaced by the rows.
+  assert.equal(items.length, 2)
+  assert.equal(items[0].type, 'blog')
+  assert.equal(items[0].quote, paragraph)
+  assert.equal(items[1].type, 'pricing')
+  assert.match(items[1].claim, /doubao-pro-32k/)
+})
+
+test('price rows are capped at eight per page, each clipped to 120 chars (0.9.8)', async () => {
+  const body = Array.from({ length: 12 }, (_, n) => `doubao-model-${n + 1} ${n + 1}.5 元/百万 tokens`).join('\n')
+  const items = await extractEvidence([volcPricingPage(body)], null, { client: { jsonCall: async () => [] } })
+  const rows = items.filter((item) => item.type === 'pricing')
+  assert.equal(rows.length, 8)
+  // A block made only of price rows is a table, not a paragraph: no blob claim.
+  assert.equal(items.length, 8)
+  assert.ok(rows.every((item) => item.quote.length <= 120))
+})
+
+test('a monthly plan price is not read as a token price (0.9.8)', async () => {
+  const page = volcPricingPage('专业版套餐 199 元/月，赠送 100 万 tokens 额度')
+  const items = await extractEvidence([page], null, { client: { jsonCall: async () => [] } })
+  assert.deepEqual(items, [])
+})

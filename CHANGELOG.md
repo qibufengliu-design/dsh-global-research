@@ -7,6 +7,28 @@
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-11-15
+
+> 起因是 0.9.7 的一次 standard 价格对比题：豆包 seed 页 `https://www.volcengine.com/docs/82379/1099320` 抓到了、进了参考（S5，官方），正文却「只有页头，无可提取明细」——零证据。根因是价格在表格里：`heuristicEvidence()` 要求段落 ≥120 字（官方页 60 字），而表格每行只有几十字，且 `htmlToText()` 把 `</tr>` 拍成一个换行、`<td>` 拍成一个空格，于是整张价目表被字数门槛整段丢掉。本版做的是「价目行也算证据」：短行只要带 token 单价，就逐行抽成 `pricing` 证据并断言成可核对的 claim。
+
+### Added
+
+- **价目行证据**：`lib/pipeline.js` 的 `heuristicEvidence(page, { minChars })` 增加价目行分支。当 `isPricingEvidencePage(page)` 或 `page.via === 'seed'` 时，按行扫描正文，接受含 token 单价的短行（`0.0008 元/千 tokens`、`每 100 万 tokens`、`输入：0.002 元`、`$0.5 per 1M input tokens` 等），每行截 120 字、每页最多 8 条，`type: 'pricing'`，`quote` 保留原始行（只压空白、不重写）。
+- **价目行断言化**：抽取时把「模型名 + 输入价 + 输出价」拼成 `claim`（`doubao-pro-32k 输入 0.0008 元/千 tokens，输出 0.002 元/千 tokens`），单位按页面原样保留（千 / 百万 / 十亿），不做二次换算；只有价格带 token 单位或紧跟在 `输入` / `输出` / `缓存命中` 标签后才会成为 claim，否则退回原行。
+- `heuristicEvidence()` 内部新增 `pricingRowEvidence()` / `paragraphEvidence()` / `isPriceTableBlock()` 等私有辅助：一块「两行以上价格、且没有句末标点」的正文被判定为价格表，不再被当成一段可引用的段落。
+
+### Changed
+
+- **长段落仍优先，价目行追加**：`heuristicEvidence()` 由「返回一条证据」改成「返回数组」，顺序固定为「先长段落（老规则不变），再价目行」；两者都有时都保留，不互相替换。同一页若判成价格表，则不再额外生成一条「整表」段落 claim。
+- **价目证据不按相似度并簇**：`groupEvidence()` 对 `pricing` 类型的证据只在 claim 完全相同时才合并——所有价目行的句式都一样（`输入 …，输出 …`），按 0.45 的相似度会把这页所有模型并进第一行，后面的型号就被藏在一个 claim 后面。
+- **中文厂商名也能命中自己的价目页**：`optionMatches()`（`countOptionHits()` 的实现）对 `pricing` 证据把页面标题一并纳入匹配范围，因为价目行里写的是代号（`doubao-pro-32k`），而选项写的是厂商名（`豆包`）；`豆包大模型价格 - 火山引擎` 这样的标题让官方价目页能算作该选项的证据。
+- 三处调用点跟着改成数组语义：逐页兜底（`found = heuristicEvidence(...)` + `items.push(...found)`）、定向回补的 seed 直取路径、批量兜底循环；`statsOf()` 的「有价目特征却无可提取明细」诊断也改看数组长度。
+
+### Tests
+
+- `test/pipeline.test.js` +6：价目表产出多条 `pricing` 证据且 claim 含型号与两个价（`|` 竖线与空格两种拍平结果产出一致的 claim，quote 仍落在正文里）；`via: 'seed'` 的页即使主机不是价目站也扫描、同正文的普通页不扫；导航短行（`首页 | 产品 | 文档`）不产证据；长段落占第一条、价目行追加在后面；12 行只取 8 条且 quote ≤120 字；`专业版套餐 199 元/月` 这类套餐价不会被当成 token 单价。
+- 测试总数 378（19 个文件），`node scripts/test-all.mjs` 全绿。
+
 ## [0.9.7] - 2026-11-15
 
 > 起因是 0.9.6 的一次 standard 价格对比题（87s/low）暴露的两处真实不一致：①表格已经正常（qwen / 豆包 / deepseek 三行独立，豆包行在但价格写 `无证据`），「## 未解决」却仍写「选项「豆包」在本轮证据中没有可用来源（零证据），未纳入对比」——同一份简报自相矛盾；②定向回补「解决 0」：抓到的两条 volcengine 页是 `volcengine.com/article/…` 与 `ai.volcengine.com/model`，都不是价目页，而已知价目页 `https://www.volcengine.com/docs/82379/1099320` 从未被优先抓取。本版做的是「文案跟表格对齐 + 价目页直接按 URL 取」。
