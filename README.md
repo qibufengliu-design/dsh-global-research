@@ -229,3 +229,11 @@ Get-ChildItem test\*.test.js | ForEach-Object { node $_.FullName }
 4. **完全重启桌面应用**（Ctrl+R / F5 只切会话，不重新加载页面）；重启后在输入框右侧能看到「深度」胶囊、插件详情页里能看到「研究深度」设置。
 
 API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会退回 `ctx-web` 与 DuckDuckGo（后者在本机常被 challenge 挡住，因此推荐至少配一个 Tavily key）。
+
+## 截图
+
+![research 卡片](docs/screenshots/01-card.png)
+
+![插件设置页：研究深度](docs/screenshots/02-settings.png)
+
+![输入框右侧的深度胶囊](docs/screenshots/03-composer.png)
