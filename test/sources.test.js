@@ -254,3 +254,83 @@ test('an index found at the last candidate gets one extra request to expand', as
   ])
   assert.equal(result.urls.length, 2)
 })
+
+test('a sitemap under the base directory is found after the root probes (0.6.7)', async () => {
+  const seen = []
+  const fetchRaw = async (url) => {
+    seen.push(url)
+    if (url === 'https://docs.spring.io/spring-ai/reference/sitemap.xml') return { status: 200, body: URLSET }
+    return { status: 404, body: 'not found' }
+  }
+  const result = await crawlSitemap({
+    baseUrl: 'https://docs.spring.io/spring-ai/reference/',
+    keywords: ['spring', 'boot', 'configuration'],
+    limit: 2,
+    fetchRaw,
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(seen, [
+    'https://docs.spring.io/sitemap.xml',
+    'https://docs.spring.io/sitemap_index.xml',
+    'https://docs.spring.io/sitemap-index.xml',
+    'https://docs.spring.io/spring-ai/reference/sitemap.xml',
+  ])
+  assert.equal(result.sitemapUrl, 'https://docs.spring.io/spring-ai/reference/sitemap.xml')
+  assert.equal(result.urls.length, 2)
+  assert.ok(result.urls.every((url) => url.startsWith('https://docs.spring.io/spring-boot/')))
+})
+
+test('a 200 HTML page is not a sitemap: the base candidates keep going (0.6.7)', async () => {
+  const seen = []
+  const fetchRaw = async (url) => {
+    seen.push(url)
+    // The base path answers its HTML 404 page with a 200 status.
+    if (url === 'https://example.com/docs/sitemap.xml') {
+      return { status: 200, body: '<!doctype html><html><body><h1>Not found</h1></body></html>' }
+    }
+    if (url === 'https://example.com/docs/sitemap_index.xml') return { status: 200, body: URLSET }
+    return { status: 404, body: '' }
+  }
+  const result = await crawlSitemap({
+    baseUrl: 'https://example.com/docs/',
+    keywords: ['spring', 'boot', 'configuration'],
+    limit: 2,
+    fetchRaw,
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(seen, [
+    'https://example.com/sitemap.xml',
+    'https://example.com/sitemap_index.xml',
+    'https://example.com/sitemap-index.xml',
+    'https://example.com/docs/sitemap.xml',
+    'https://example.com/docs/sitemap_index.xml',
+  ])
+  assert.equal(result.sitemapUrl, 'https://example.com/docs/sitemap_index.xml')
+  assert.equal(result.urls.length, 2)
+})
+
+test('a child sitemap is resolved against the index URL, not the site root (0.6.7)', async () => {
+  const LOCAL_INDEX = `<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>sitemap-0.xml</loc></sitemap>
+</sitemapindex>`
+  const LOCAL_URLSET = `<urlset><url><loc>https://example.com/docs/reference/spring-boot-config.html</loc></url></urlset>`
+  const seen = []
+  const fetchRaw = async (url) => {
+    seen.push(url)
+    if (url === 'https://example.com/docs/sitemap_index.xml') return { status: 200, body: LOCAL_INDEX }
+    if (url === 'https://example.com/docs/sitemap-0.xml') return { status: 200, body: LOCAL_URLSET }
+    return { status: 404, body: '' }
+  }
+  const result = await crawlSitemap({
+    baseUrl: 'https://example.com/docs/',
+    keywords: ['spring', 'boot'],
+    limit: 1,
+    fetchRaw,
+  })
+  assert.equal(result.ok, true)
+  assert.ok(seen.includes('https://example.com/docs/sitemap-0.xml'))
+  assert.ok(!seen.includes('https://example.com/sitemap-0.xml'))
+  assert.equal(result.sitemapUrl, 'https://example.com/docs/sitemap-0.xml')
+  assert.deepEqual(result.urls, ['https://example.com/docs/reference/spring-boot-config.html'])
+})

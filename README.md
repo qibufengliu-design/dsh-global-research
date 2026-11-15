@@ -188,7 +188,7 @@ config:
 Get-ChildItem test\*.test.js | ForEach-Object { node $_.FullName }
 ```
 
-覆盖：URL 规范化与内容去重、预算、JSON 修复、引用校验、DDG 解析、引擎失败隔离与自动禁用、付费引擎解析与 key 来源、垂直源选择与解析（GitHub/arXiv/StackExchange/npm/HN/PyPI，含垃圾 payload、纯中文 query 跳过、SE 标签映射与 intitle 回退、单源失败隔离）、管线十步（假引擎/假抓取/假模型，含检索计划优先与 ghost citation 清理）、阶段耗时（六个阶段的整数毫秒、快跑不进简报）、官方链接挖掘与预算边界、EUR-Lex Cellar 映射与回退、EUR-Lex 摘要页/搜索页降权与 ELI 原文优先、EU 站点语言前缀归一、法规问题回补预留页位、无一手源时回补强制官方域名 query、垂直源正文兜底与选择位保护、配置校验（类型强转/夹取/未知键 warning）、域名信任名单与黑名单过滤、缓存（key 归一、TTL、LRU、命中不调模型、focus 不同绕过、可关闭）、client 卡片解析（置信度徽章/来源数/耗时/失败与运行中状态/无分段兜底/阶段 chip 与缺段不渲染）、阶段摘要格式（>0.5s、最多 4 段、按阶段顺序输出）、`apply` 注册、skill 注册与端到端 execute、sourcePlan 通道声明、sitemap 解析与关键词打分、sitemap 预算/失败隔离、用户提供资料作为证据。共 251 例。
+覆盖：URL 规范化与内容去重、预算、JSON 修复、引用校验、DDG 解析、引擎失败隔离与自动禁用、付费引擎解析与 key 来源、垂直源选择与解析（GitHub/arXiv/StackExchange/npm/HN/PyPI，含垃圾 payload、纯中文 query 跳过、SE 标签映射与 intitle 回退、单源失败隔离）、管线十步（假引擎/假抓取/假模型，含检索计划优先与 ghost citation 清理）、阶段耗时（六个阶段的整数毫秒、快跑不进简报）、官方链接挖掘与预算边界、EUR-Lex Cellar 映射与回退、EUR-Lex 摘要页/搜索页降权与 ELI 原文优先、EU 站点语言前缀归一、法规问题回补预留页位、无一手源时回补强制官方域名 query、垂直源正文兜底与选择位保护、配置校验（类型强转/夹取/未知键 warning）、域名信任名单与黑名单过滤、缓存（key 归一、TTL、LRU、命中不调模型、focus 不同绕过、可关闭）、client 卡片解析（置信度徽章/来源数/耗时/失败与运行中状态/无分段兜底/阶段 chip 与缺段不渲染）、阶段摘要格式（>0.5s、最多 4 段、按阶段顺序输出）、`apply` 注册、skill 注册与端到端 execute、sourcePlan 通道声明、sitemap 解析与关键词打分、sitemap 预算/失败隔离、用户提供资料作为证据。共 283 例。
 
 ## 真实网络 e2e
 
@@ -256,12 +256,15 @@ $env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
 `pricing` 的 `seeds` 只在价格类问题出现（`resolveStrategy` 对非价格问题会剥掉通道上的 `seeds`），否则发布/EOL 类问题会把
 整档页预算花在厂商价目页上。
 
-**sitemap 定向爬取**（`lib/sources.js`）：`crawlSitemap` 按 `sitemap.xml` → `sitemap_index.xml` → `sitemap-index.xml`
-顺序探测（0.6.4 起含连字符形式，`paths` 参数可覆盖顺序）；只有 `parseSitemap` 真的解析出 `<loc>` 才算命中，
-返回 `text/xml` 但内容是 HTML 页的软 404 会继续试下一个候选。命中 `sitemapindex` 时再额外花 1 次请求展开子 sitemap（只跟一层）；
-解析 `<loc>` 后按问题关键词（latin token + CJK 短片段）对路径分词打分，取前 N 条。
-约束：单站最多 3 次候选路径 HTTP（全 404 时正好 3 次），命中 index 再加 1 次展开（合计最多 4 次），请求间隔 ≥400ms，
-失败返回 `{ ok: false, reason }` 不抛异常；不解析 robots.txt（已知限制）。
+**sitemap 定向爬取**（`lib/sources.js`）：`crawlSitemap` 先探站点根（`/sitemap.xml` → `/sitemap_index.xml` → `/sitemap-index.xml`，
+0.6.4 起含连字符形式），再探 **base 目录下**的同名文件（0.6.7：`sitemap.xml` → `sitemap_index.xml` → `sitemap-index.xml`，
+相对 `baseUrl` 所在目录解析，去重后不会重复请求）。`paths` 参数可覆盖为纯根相对候选。
+命中条件不看状态码而看内容：返回体必须含 `<urlset>` 或 `<sitemapindex>` 且真解析出 `<loc>`，否则（含 200 但内容是 HTML 的软 404）
+继续下一个候选。命中 `sitemapindex` 时再额外花请求展开子 sitemap（只跟一层），子 `<loc>` 相对 **index URL** 解析，
+因此 `/docs/` 下的 `sitemap-0.xml` 仍落在 `/docs/` 里。解析 `<loc>` 后按问题关键词（latin token + CJK 短片段）对路径分词打分，取前 N 条。
+
+约束：候选数 = 根 3 条 + base 3 条（去重后 ≤6），最坏全 404 时 6 次请求；命中 index 再允许 2 次展开（合计最多 8 次），
+请求间隔 ≥400ms，单次整体预算 12s，失败返回 `{ ok: false, reason }` 不抛异常；不解析 robots.txt（已知限制）。
 
 **sitemap 路径偏好**（0.6.5）：在关键词打分之上加路径先验——路径含 `/reference/`、`/docs/`、`/api/`、`/guide/`、`/guides/`、
 `/manual/`、`/learn/` 记 +3；含 `/blog/`、`/news/`、`/press/`、`/events/`、`/changelog/`、`/tag/` 记 −3。
@@ -287,10 +290,16 @@ $env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
 
 已知限制：
 
-- Spring 家族的入口是 `spring.io/sitemap-index.xml`（连字符），0.6.4 起能命中：真实网络验证 `crawlSitemap({ baseUrl: 'https://spring.io' })`
-  返回 `ok: true`，经 `sitemap-index.xml` 展开到 `sitemap-0.xml`（7475 条 `<loc>`）。但 `docs.spring.io` 自身的三条候选路径实测全 404
-  （`sitemap.xml` / `sitemap_index.xml` / `sitemap-index.xml`），所以 `bases` 里的 docs 根仍会失败并回退到下一个根。
-- `sitemapindex` 只跟一层，嵌套更深的站点会少抓；index 命中的是最后一个候选时，展开子图会多花 1 次请求（上限内）。
+- `spring.io` 的 sitemap 入口是 `spring.io/sitemap-index.xml`（连字符），0.6.4 起能命中：真实网络验证
+  `crawlSitemap({ baseUrl: 'https://spring.io' })` 返回 `ok: true`，经 `sitemap-index.xml` 展开到 `sitemap-0.xml`（7475 条 `<loc>`）。
+- `docs.spring.io` 的站点根没有 sitemap（`/sitemap.xml`、`/sitemap_index.xml`、`/sitemap-index.xml` 实测全 404），
+  但 **文档目录下有**：0.6.7 实测 `https://docs.spring.io/spring-ai/reference/sitemap.xml` 200 / 132191 字节，
+  `https://docs.spring.io/spring-boot/sitemap.xml` 200 / 13687546 字节。`crawlSitemap({ baseUrl: 'https://docs.spring.io/spring-ai/reference/' })`
+  因此能返回 `ok: true` 与该目录下的 3 条 URL。
+- 通道的 `bases` 仍是站点根（`docs.spring.io` / `docs.spring.io/spring-boot` …），而 `bases` 是「第一个成功即停」且与问题类型无关：
+  把 `spring-ai/reference/` 排进去会让 Spring Boot 类问题也拿到 Spring AI 文档。所以 0.6.7 只交付「base 相对发现」这个能力，
+  通道层面的按题选择题根作为后续项，没有在本版硬接。
+- `sitemapindex` 只跟一层，嵌套更深的站点会少抓（候选耗尽时按失败返回）。
 - `api` 通道仅声明不执行；`renderFallback` 未接线。
 - 不读 robots.txt，也不做 crawl-delay 之外的站点限速。
 
@@ -382,6 +391,21 @@ API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会
 - 万一过期页仍进了「## 参考」（全页过期或已被采用），该行行尾标 `（已过期，仅作参考）`。
 
 ## 更新日志
+
+### 0.6.7（2026-11-15）
+
+- **base 相对 sitemap 发现**：`SITEMAP_PATHS` 拆成 `ROOT_SITEMAP_PATHS`（`/sitemap.xml` 等，站点根）与
+  `BASE_SITEMAP_PATHS`（`sitemap.xml` 等，相对 `baseUrl` 目录）；先试根、再试 base，按解析后的 URL 去重，
+  所以裸域名仍只花 3 次请求。`SITEMAP_PATHS` 保留为根候选的别名，`paths` 参数覆盖行为不变（纯根相对）。
+- **内容校验**：200 不再等于命中——返回体必须同时含 `<urlset>`/`<sitemapindex>` 且解析出至少一个 `<loc>`，
+  否则记 `not a sitemap` 并继续下一个候选（200 + HTML 的软 404 因此也能穿过）。
+- **index 展开用子 map 自己所在目录**：子 `<loc>` 相对 index URL 解析，`/docs/` 下的 `sitemap-0.xml` 不会再被拼到站点根；
+  子图不是 `<urlset>` 或没有 `<loc>` 时继续后面的候选而不是整轮失败。
+- **请求上限**：候选 ≤6（根 3 + base 3，去重），加最多 2 次 index 展开，最坏 8 次请求、间隔 ≥400ms、整体 12s 预算。
+- 真实网络验证：`crawlSitemap({ baseUrl: 'https://docs.spring.io/spring-ai/reference/', keywords: ['chat','memory','vector','advisors'] })`
+  → `ok: true`，`sitemapUrl` 为该目录下的 `sitemap.xml`，3 条 URL 均在 `docs.spring.io/spring-ai/reference/` 下；
+  `docs.langchain4j.dev` → `ok: true`，走根 `sitemap.xml`（其 `<loc>` 指向 `langchain4j.github.io`）。
+- 测试总数 283（新增 sources 3：base 相对命中、200 HTML 软 404、index 子图按父目录解析）。
 
 ### 0.6.6（2026-11-15）
 
