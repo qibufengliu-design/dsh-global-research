@@ -21,6 +21,7 @@ import {
   checkRelease,
   parseDepthProfiles,
   parseReadmeBudgets,
+  parseRetrievalVersion,
   releaseSections,
   staleTestCounts,
 } from '../scripts/check-release.mjs'
@@ -400,6 +401,85 @@ test('checkWorkflows passes the workflows this repository ships', () => {
   assert.deepEqual(failures, [])
   assert.equal(passes.length, 1)
   assert.match(passes[0], /个 workflow 结构完整/)
+})
+
+function makeReleaseFixture({ version = '1.2.3', changelog, retrievalVersion } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-release-'))
+  mkdirSync(join(dir, 'lib'), { recursive: true })
+  mkdirSync(join(dir, 'scripts'), { recursive: true })
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fixture', version }))
+  writeFileSync(
+    join(dir, 'CHANGELOG.md'),
+    changelog ??
+      [
+        '# Changelog',
+        '',
+        '## [Unreleased]',
+        '',
+        `## [${version}] - 2026-02-02`,
+        '',
+        '- 当前版本',
+        '',
+        '## [1.2.2] - 2026-01-01',
+        '',
+        '- 上一版',
+        '',
+      ].join('\n'),
+  )
+  writeFileSync(
+    join(dir, 'lib/pipeline.js'),
+    'export const DEPTH_PROFILES = {\n  quick: { queries: 2, pages: 3, llmCalls: 6, gapRounds: 0, wallMs: 120000 },\n  standard: { queries: 6, pages: 12, llmCalls: 14, gapRounds: 1, wallMs: 240000 },\n  deep: { queries: 16, pages: 30, llmCalls: 28, gapRounds: 1, wallMs: 360000 },\n}\n',
+  )
+  writeFileSync(
+    join(dir, 'README.md'),
+    [
+      '| depth | queries | pages | LLM 轮 | 补搜轮 | 墙钟 |',
+      '|---|---|---|---|---|---|',
+      '| quick | 2 | 3 | 6 | 0 | 120s |',
+      '| standard | 6 | 12 | 14 | 1 | 240s |',
+      '| deep | 16 | 30 | 28 | 1 | 360s |',
+      '',
+    ].join('\n'),
+  )
+  writeFileSync(
+    join(dir, 'scripts/retrieval-check.mjs'),
+    `export const VERSION = '${retrievalVersion ?? version}'\nexport const DEPTHS = ['quick', 'standard', 'deep']\n`,
+  )
+  return dir
+}
+
+test('checkRelease flags a CHANGELOG that is one version behind package.json', () => {
+  const dir = makeReleaseFixture({
+    version: '1.2.3',
+    changelog: ['# Changelog', '', '## [Unreleased]', '', '## [1.2.4] - 2026-03-03', '', '- 新', '', '## [1.2.3] - 2026-02-02', '', '- 旧', ''].join('\n'),
+  })
+  try {
+    const { failures } = checkRelease(dir)
+    assert.ok(
+      failures.some((line) => line.includes('最上面的版本小节是 1.2.4')),
+      failures.join('\n'),
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('checkRelease catches retrieval-check VERSION drifting from package.json', () => {
+  const dir = makeReleaseFixture({ version: '1.2.3', retrievalVersion: '1.2.2' })
+  try {
+    const { failures } = checkRelease(dir)
+    assert.ok(
+      failures.some((line) => line.includes('VERSION 是 1.2.2')),
+      failures.join('\n'),
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('parseRetrievalVersion reads the exported constant', () => {
+  assert.equal(parseRetrievalVersion("export const VERSION = '1.0.0'\n"), '1.0.0')
+  assert.equal(parseRetrievalVersion('export const DEPTHS = []\n'), null)
 })
 
 test('normalizeBody irons out line endings and trailing blanks', () => {

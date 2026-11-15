@@ -65,6 +65,12 @@ export function releaseSections(markdown) {
   return sections;
 }
 
+/** 检索自检脚本里导出的 VERSION（与 package.json 版本必须一致）。 */
+export function parseRetrievalVersion(source) {
+  const match = String(source || '').match(/export\s+const\s+VERSION\s*=\s*(['"])([^'"]+)\1/)
+  return match ? match[2] : null
+}
+
 /** 找出文档里写死的测试例数（如「352 例」），这种数字每加一个测试就会过期。 */
 export function staleTestCounts(text) {
   const hits = [];
@@ -156,6 +162,30 @@ export function checkRelease(root = DEFAULT_ROOT) {
     failures.push('CHANGELOG 版本小节不是从新到旧排列');
   } else if (sectionVersions.length > 0) {
     passes.push(`CHANGELOG 版本小节按新到旧排列（${sectionVersions.length} 条）`);
+  }
+  if (version && sectionVersions.length > 0) {
+    if (sectionVersions[0] !== version) {
+      failures.push(
+        `CHANGELOG 最上面的版本小节是 ${sectionVersions[0]}，但 package.json 是 ${version}` +
+          '（发版时先写新小节，别让上一版留在最上面）'
+      );
+    } else {
+      passes.push(`CHANGELOG 最上面的小节就是当前版本 ${version}`);
+    }
+  }
+
+  const retrievalVersion = parseRetrievalVersion(readFile(root, 'scripts/retrieval-check.mjs') ?? '')
+  if (version) {
+    if (retrievalVersion === null) {
+      failures.push('scripts/retrieval-check.mjs 里找不到 `export const VERSION`')
+    } else if (retrievalVersion !== version) {
+      failures.push(
+        `scripts/retrieval-check.mjs 的 VERSION 是 ${retrievalVersion}，与 package.json 的 ${version} 不一致` +
+          '（历史上有过一次单独的「sync VERSION」提交，就是这里漂的）'
+      )
+    } else {
+      passes.push(`scripts/retrieval-check.mjs 的 VERSION 与版本号一致（${version}）`)
+    }
   }
 
   const sections = releaseSections(changelog);
