@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  checkDocsIndex,
   checkDocumentedCommands,
   checkJsonBlocks,
   checkLeaks,
@@ -329,6 +330,40 @@ test('checkLeaks passes a tree without secrets', () => {
     checkLeaks(dir, { fail: (line) => failures.push(line), pass: (line) => passes.push(line) })
     assert.deepEqual(failures, [])
     assert.ok(passes.some((line) => line.includes('没有密钥或本机绝对路径')), passes.join('\n'))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('checkDocsIndex flags a docs page nobody links to', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-docsindex-'))
+  try {
+    mkdirSync(join(dir, 'docs'))
+    writeFileSync(join(dir, 'README.md'), '# 标题\n\n| [architecture](docs/architecture.md) | 架构 |\n')
+    writeFileSync(join(dir, 'docs/architecture.md'), '# 架构\n')
+    writeFileSync(join(dir, 'docs/orphan.md'), '# 没人链的文档\n')
+    const failures = []
+    const passes = []
+    checkDocsIndex(dir, { fail: (line) => failures.push(line), pass: (line) => passes.push(line) })
+    assert.deepEqual(failures, ['docs 文档没有从 README 链到：docs/orphan.md'])
+    assert.deepEqual(passes, [])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('checkDocsIndex passes when every page is linked', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-docsindex-ok-'))
+  try {
+    mkdirSync(join(dir, 'docs'))
+    writeFileSync(join(dir, 'README.md'), '# 标题\n\n见 [docs/a.md](docs/a.md) 与 [docs/b.md#节](docs/b.md#节)。\n')
+    writeFileSync(join(dir, 'docs/a.md'), '# A\n')
+    writeFileSync(join(dir, 'docs/b.md'), '# B\n')
+    const failures = []
+    const passes = []
+    checkDocsIndex(dir, { fail: (line) => failures.push(line), pass: (line) => passes.push(line) })
+    assert.deepEqual(failures, [])
+    assert.deepEqual(passes, ['docs/2 篇文档都能从 README 链到'])
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

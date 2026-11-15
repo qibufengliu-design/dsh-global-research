@@ -4,7 +4,7 @@
  *
  *   node scripts/check-docs.mjs
  *
- * 检查九件事：
+ * 检查十件事：
  *   1. 企业级仓库需要的文件都在（README / CHANGELOG / 社区文件 / docs / 模板）；
  *   2. README、docs/、CONTRIBUTING、SECURITY、HANDOFF 里的相对链接都能解析；
  *   3. CHANGELOG 有 [Unreleased] 段，且有与 package.json 版本一致的条目；
@@ -13,7 +13,8 @@
  *   6. README 的参数表与 index.js 里 research 工具的 parameters 一致（新参数不写进 README 就是文档漂移）；
  *   7. Markdown 里标成 ```json 的示例都能解析（示例是给人复制去跑的，语法错等于没写）；
  *   8. 文档里写到的 `node scripts/*.mjs` 与 `npm run <script>` 都真实存在（脚本改名后文档没跟，用户照着跑就报错）；
- *   9. 仓库里没有真密钥（GitHub/AWS/OpenAI 等 token、私有密钥块），也没有把本机绝对路径抄进文档。
+ *   9. 仓库里没有真密钥（GitHub/AWS/OpenAI 等 token、私有密钥块），也没有把本机绝对路径抄进文档；
+ *   10. `docs/` 下每篇文档都能从 README 的文档索引链到（新写一页却没人能发现，等于没写）。
  *
  * 任何一项不通过就以非零码退出并列出具体文件，方便在 CI 里一眼看出哪里不整齐。
  * `checkRepository()` 同时被 test/repo-hygiene.test.js 直接调用，测试不落盘、不起子进程。
@@ -360,6 +361,37 @@ export function checkLeaks(root, report) {
 }
 
 /**
+ * 第 10 项：`docs/` 下的每篇文档都必须能从 README 的文档索引链到。
+ * 新写一页 docs 却没人能发现，等于没写。
+ * @param {string} root
+ * @param {{ fail: (m: string) => void, pass: (m: string) => void }} report
+ */
+export function checkDocsIndex(root, report) {
+  const docsDir = join(root, 'docs')
+  if (!existsSync(docsDir)) return
+  const pages = readdirSync(docsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+    .map((entry) => `docs/${entry.name}`)
+    .sort()
+  if (!pages.length) return
+
+  const readmePath = join(root, 'README.md')
+  if (!existsSync(readmePath)) return
+  const readme = readFileSync(readmePath, 'utf8')
+  LINK_PATTERN.lastIndex = 0
+  const linked = new Set()
+  let match
+  while ((match = LINK_PATTERN.exec(readme)) !== null) {
+    const [pathPart] = match[1].split('#')
+    if (pathPart) linked.add(pathPart.replaceAll('\\', '/'))
+  }
+
+  const orphan = pages.filter((page) => !linked.has(page))
+  for (const page of orphan) report.fail(`docs 文档没有从 README 链到：${page}`)
+  if (!orphan.length) report.pass(`docs/${pages.length} 篇文档都能从 README 链到`)
+}
+
+/**
  * @param {string} [root] 仓库根目录
  * @returns {{ passes: string[], failures: string[] }}
  */
@@ -479,6 +511,9 @@ export function checkRepository(root = DEFAULT_ROOT) {
 
   // 9. 没有密钥、没有本机绝对路径 --------------------------------------------
   checkLeaks(root, { fail, pass })
+
+  // 10. docs 都能从 README 链到 ----------------------------------------------
+  checkDocsIndex(root, { fail, pass })
 
   return { passes, failures }
 }

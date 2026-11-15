@@ -185,7 +185,7 @@ Web 端不再是通用工具行，而是一张卡片：置信度徽章（高/中
 ```powershell
 node scripts/test-all.mjs       # 逐文件跑全部测试（沙箱里 node --test test/ 会 spawn EPERM）
 node --check index.js client.js
-node scripts/check-docs.mjs     # 仓库整洁性：必需文件、相对链接、CHANGELOG、零依赖、Issue 表单、README 参数表与工具参数一致、JSON 示例可解析、文档里的脚本命令真实存在
+node scripts/check-docs.mjs     # 仓库整洁性：必需文件、相对链接、CHANGELOG、零依赖、Issue 表单、README 参数表与工具参数一致、JSON 示例可解析、文档里的脚本命令真实存在、没有密钥或本机绝对路径、docs 都能从 README 链到
 node scripts/check-release.mjs  # 发布一致性：版本号、CHANGELOG 小节（非空、不重复、从新到旧）、预算表与代码一致
 ```
 
