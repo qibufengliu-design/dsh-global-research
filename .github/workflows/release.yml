@@ -2,6 +2,11 @@ name: Release
 
 # 打 tag 即发版：把 CHANGELOG.md 里该版本的条目做成 GitHub Release。
 # 历史 tag（v0.9.0–v0.9.4）可以用 workflow_dispatch 手动补建，不重打 tag。
+#
+# 两条路径的差异：
+# - push tag：检出该 tag，脚本与 CHANGELOG 都来自 tag 树；顺带校验 tag 与 package.json 版本一致。
+# - workflow_dispatch（补建历史版本）：检出 main（脚本与完整 CHANGELOG 都在 main），
+#   只校验 tag 存在且 CHANGELOG 里有这一节，不要求旧 tag 的 package.json 等于新版本。
 
 on:
   push:
@@ -25,31 +30,67 @@ jobs:
     name: publish ${{ inputs.tag || github.ref_name }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - name: Resolve tag
+        id: meta
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_TAG:-}" ]; then
+            TAG="$INPUT_TAG"
+            REF=main
+          else
+            TAG="$REF_NAME"
+            REF="$GITHUB_REF"
+          fi
+          if [ "${TAG#v}" = "$TAG" ]; then
+            echo "tag 必须以 v 开头：$TAG"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
+      - name: Check out ${{ steps.meta.outputs.ref }}
+        uses: actions/checkout@v7
         with:
+          ref: ${{ steps.meta.outputs.ref }}
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version: '24'
 
-      - name: Resolve and verify tag
-        id: meta
+      - name: Verify tag and CHANGELOG section
         run: |
           set -euo pipefail
-          TAG="${{ inputs.tag || github.ref_name }}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "tag $TAG 不存在"; exit 1; }
-          V=$(node -p "require('./package.json').version")
-          if [ "v$V" != "$TAG" ]; then
-            echo "tag $TAG 与 package.json 版本 v$V 不一致：发版前先把 package.json 升到 $TAG 去掉 v 的形式"
-            exit 1
+          TAG="${{ steps.meta.outputs.tag }}"
+          git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "tag $TAG 不存在（先推送 tag）"; exit 1; }
+          echo "tag $TAG 存在"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V=$(node -p "require('./package.json').version")
+            if [ "v$V" != "$TAG" ]; then
+              echo "tag $TAG 与 package.json 版本 v$V 不一致：发版前先把 package.json 升到 $TAG 去掉 v 的形式"
+              exit 1
+            fi
+            echo "tag $TAG 与 package.json 版本一致"
+          else
+            V="${TAG#v}"
           fi
-          echo "tag $TAG 与 package.json 版本一致"
+          grep -q "^## \[$V\]" CHANGELOG.md || { echo "CHANGELOG.md 里没有 [$V] 小节"; exit 1; }
+          echo "CHANGELOG 有 [$V] 小节"
 
       - name: Extract release notes from CHANGELOG.md
-        run: node scripts/release-notes.mjs "${{ steps.meta.outputs.tag }}" > "$RUNNER_TEMP/notes.md"
+        run: |
+          set -euo pipefail
+          node scripts/release-notes.mjs "${{ steps.meta.outputs.tag }}" > "$RUNNER_TEMP/notes.md"
+          if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
+            echo "没有抽到发布说明"
+            exit 1
+          fi
+          wc -c "$RUNNER_TEMP/notes.md"
 
       - name: Skip when the release already exists
         id: existing
