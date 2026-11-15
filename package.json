@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-global-research",
-  "version": "0.9.9",
+  "version": "0.9.10",
   "description": "DeepSeek Harness 的 research 工具：把开放问题做成带引用、可核查的研究简报（零依赖）",
   "type": "module",
   "main": "./index.js",

@@ -4,7 +4,7 @@
  *
  *   node scripts/check-docs.mjs
  *
- * 检查十件事：
+ * 检查十一件事：
  *   1. 企业级仓库需要的文件都在（README / CHANGELOG / 社区文件 / docs / 模板）；
  *   2. README、docs/、CONTRIBUTING、SECURITY、HANDOFF 里的相对链接都能解析；
  *   3. CHANGELOG 有 [Unreleased] 段，且有与 package.json 版本一致的条目；
@@ -14,7 +14,8 @@
  *   7. Markdown 里标成 ```json 的示例都能解析（示例是给人复制去跑的，语法错等于没写）；
  *   8. 文档里写到的 `node scripts/*.mjs` 与 `npm run <script>` 都真实存在（脚本改名后文档没跟，用户照着跑就报错）；
  *   9. 仓库里没有真密钥（GitHub/AWS/OpenAI 等 token、私有密钥块），也没有把本机绝对路径抄进文档；
- *   10. `docs/` 下每篇文档都能从 README 的文档索引链到（新写一页却没人能发现，等于没写）。
+ *   10. `docs/` 下每篇文档都能从 README 的文档索引链到（新写一页却没人能发现，等于没写）；
+ *   11. `.github/workflows/` 里每个 workflow 结构完整（GitHub 对坏 workflow 只是静默不跑）。
  *
  * 任何一项不通过就以非零码退出并列出具体文件，方便在 CI 里一眼看出哪里不整齐。
  * `checkRepository()` 同时被 test/repo-hygiene.test.js 直接调用，测试不落盘、不起子进程。
@@ -392,6 +393,73 @@ export function checkDocsIndex(root, report) {
 }
 
 /**
+ * 第 11 项：`.github/workflows/` 里每个 workflow 的结构契约。
+ * GitHub 对坏掉的 workflow 只是静默不跑，坏了没人知道，所以这里做最粗的结构检查：
+ * 顶层 name/on/jobs、每个 job 有 runs-on 或 uses、没有 tab 缩进与行尾空白。
+ * @param {string} root
+ * @param {{ fail: (m: string) => void, pass: (m: string) => void }} report
+ */
+export function checkWorkflows(root, report) {
+  const dir = join(root, '.github', 'workflows')
+  if (!existsSync(dir)) {
+    report.fail('缺少 .github/workflows 目录')
+    return
+  }
+  const files = readdirSync(dir)
+    .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
+    .sort()
+  if (!files.length) {
+    report.fail('.github/workflows 里没有任何 workflow 文件')
+    return
+  }
+
+  let broken = 0
+  for (const file of files) {
+    const fail = (why) => {
+      broken += 1
+      report.fail(`${file}：${why}`)
+    }
+    const text = readFileSync(join(dir, file), 'utf8')
+    if (!text.endsWith('\n')) fail('文件结尾没有换行')
+    if (text.includes('\r')) fail('用了 CRLF 换行（YAML 在 runner 上容易解析失败）')
+    const lines = text.split('\n')
+    for (let index = 0; index < lines.length; index += 1) {
+      if (/^\t/.test(lines[index])) {
+        fail(`第 ${index + 1} 行用制表符缩进（YAML 禁止 tab 缩进）`)
+        break
+      }
+      if (/[ \t]$/.test(lines[index])) {
+        fail(`第 ${index + 1} 行有行尾空白`)
+        break
+      }
+    }
+    if (!/^name:/m.test(text)) fail('缺少顶层 `name:`')
+    if (!/^on:/m.test(text)) fail('缺少触发条件 `on:`')
+    if (!/^jobs:/m.test(text)) {
+      fail('缺少 `jobs:`')
+      continue
+    }
+    const jobsBody = text.slice(/^jobs:/m.exec(text).index)
+    const jobStarts = [...jobsBody.matchAll(/^ {2}([A-Za-z0-9_-]+):[ \t]*$/gm)]
+    if (!jobStarts.length) {
+      fail('`jobs:` 下没有任何 job')
+      continue
+    }
+    for (let index = 0; index < jobStarts.length; index += 1) {
+      const from = jobStarts[index].index
+      const to = index + 1 < jobStarts.length ? jobStarts[index + 1].index : jobsBody.length
+      const body = jobsBody.slice(from, to)
+      if (!/^\s+runs-on:/m.test(body) && !/^\s+uses:/m.test(body)) {
+        fail(`job \`${jobStarts[index][1]}\` 既没有 \`runs-on:\` 也没有 \`uses:\``)
+      }
+    }
+  }
+  if (!broken) {
+    report.pass(`${files.length} 个 workflow 结构完整（name / on / jobs，无 tab 缩进、无行尾空白）`)
+  }
+}
+
+/**
  * @param {string} [root] 仓库根目录
  * @returns {{ passes: string[], failures: string[] }}
  */
@@ -514,6 +582,9 @@ export function checkRepository(root = DEFAULT_ROOT) {
 
   // 10. docs 都能从 README 链到 ----------------------------------------------
   checkDocsIndex(root, { fail, pass })
+
+  // 11. workflow 结构 --------------------------------------------------------
+  checkWorkflows(root, { fail, pass })
 
   return { passes, failures }
 }

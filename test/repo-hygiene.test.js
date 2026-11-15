@@ -11,6 +11,7 @@ import {
   checkLeaks,
   checkRepository,
   checkToolParams,
+  checkWorkflows,
   documentedCommands,
   documentedParams,
   scanLeaks,
@@ -367,6 +368,38 @@ test('checkDocsIndex passes when every page is linked', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('checkWorkflows flags the mistakes GitHub only reports by never running', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-wf-'))
+  try {
+    mkdirSync(join(dir, '.github', 'workflows'), { recursive: true })
+    writeFileSync(
+      join(dir, '.github', 'workflows', 'tabbed.yml'),
+      ['name: Tabbed', 'on: push', 'jobs:', '  build:', '\truns-on: ubuntu-latest', ''].join('\n'),
+    )
+    writeFileSync(
+      join(dir, '.github', 'workflows', 'norunson.yml'),
+      ['name: NoRunner', 'on: push', 'jobs:', '  build:', '    steps:', '      - run: echo hi', ''].join('\n'),
+    )
+    const failures = []
+    const passes = []
+    checkWorkflows(dir, { fail: (line) => failures.push(line), pass: (line) => passes.push(line) })
+    assert.ok(failures.some((line) => line.includes('制表符缩进')), failures.join('\n'))
+    assert.ok(failures.some((line) => line.includes('job `build`')), failures.join('\n'))
+    assert.deepEqual(passes, [])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('checkWorkflows passes the workflows this repository ships', () => {
+  const failures = []
+  const passes = []
+  checkWorkflows(root, { fail: (line) => failures.push(line), pass: (line) => passes.push(line) })
+  assert.deepEqual(failures, [])
+  assert.equal(passes.length, 1)
+  assert.match(passes[0], /个 workflow 结构完整/)
 })
 
 test('normalizeBody irons out line endings and trailing blanks', () => {
