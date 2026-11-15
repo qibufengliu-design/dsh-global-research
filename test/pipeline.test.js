@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { runResearch, groupEvidence, looksLikeFollowUp } from '../lib/pipeline.js'
+import { runResearch, groupEvidence, looksLikeFollowUp, extractEvidence } from '../lib/pipeline.js'
 import { downgradeConfidence } from '../lib/brief.js'
 import { resolveStrategy } from '../lib/strategy.js'
 import { rankHits } from '../lib/util.js'
@@ -903,6 +903,12 @@ test('a docs kind crawls its declared sitemap and clamps pages to the budget', a
   assert.equal(result.stats.sourceFailures, 0)
   assert.deepEqual(sitemapRequests.filter((url) => /sitemap/i.test(url)), ['https://docs.spring.io/sitemap.xml'])
   assert.ok(result.sources.some((source) => source.domain === 'docs.spring.io'), JSON.stringify(result.sources))
+  // 0.6.2 — every page came through the targeted sitemap channel, so all three
+  // are first-party readable pages and the funnel line has to say how many of
+  // them were adopted.
+  assert.equal(result.stats.officialReadable, 3)
+  assert.ok(result.stats.officialAdopted >= 1 && result.stats.officialAdopted <= 3)
+  assert.match(result.brief, new RegExp(`> 检索流程：.*· 官方采用 ${result.stats.officialAdopted}/3$`, 'm'))
   assert.match(result.brief, /^## 结论$/m)
 })
 
@@ -975,4 +981,61 @@ test('user-provided text is the first evidence source, not a fetched page', asyn
   assert.ok(!(result.stats.hosts ?? []).includes('user-provided'))
   assert.ok(result.stats.pagesFetched >= 1)
   assert.match(result.brief, /^## 结论$/m)
+})
+
+function evidencePage(url, text, extra = {}) {
+  return {
+    url, finalUrl: url, title: url, domain: new URL(url).hostname,
+    text, ok: true, via: 'raw', ...extra,
+  }
+}
+
+test('a page the model skipped still gets a heuristic evidence item (0.6.2)', async () => {
+  const spot = 'Node 22 entered LTS in October 2025 and receives security fixes until April 2027.'
+  const pages = [
+    evidencePage('https://example.com/a', spot),
+    evidencePage('https://example.com/b', 'Beta documentation covers the release cadence and support windows for every major line in detail. '.repeat(2)),
+    evidencePage('https://example.com/c', 'Gamma documentation covers the migration path between major versions and the configuration changes involved. '.repeat(2)),
+  ]
+  const client = {
+    jsonCall: async () => ([{
+      claim: 'Node 22 is the current LTS line', quote: spot, source: 0, type: 'docs', stance: 'support',
+    }]),
+  }
+  const items = await extractEvidence(pages, null, { client })
+  // One model item used to suppress the fallback for the whole batch: the two
+  // pages the model never cited produced no evidence and were dropped from 参考.
+  assert.equal(items.length, 3)
+  assert.deepEqual(items.map((item) => item.url), pages.map((page) => page.url))
+  assert.equal(items[0].stance, 'support')
+  assert.deepEqual(items.slice(1).map((item) => item.stance), ['neutral', 'neutral'])
+  assert.equal(items[1].via, 'raw')
+})
+
+test('official and sitemap pages use the shorter heuristic threshold (0.6.2)', async () => {
+  const paragraph = 'The regulation states that the obligation applies from December 2028 to all providers of the service.'
+  assert.ok(paragraph.length >= 60 && paragraph.length < 120, 'fixture must only pass the relaxed gate')
+  const official = evidencePage('https://eur-lex.europa.eu/eli/reg/2024/2847/oj', paragraph)
+  const blog = evidencePage('https://example.com/blog', paragraph)
+  const sitemap = evidencePage('https://docs.spring.io/spring-ai/reference/', paragraph, { via: 'sitemap' })
+  const items = await extractEvidence([official, blog, sitemap], null, { client: { jsonCall: async () => [] } })
+  // 60 characters for first-party pages, 120 for everything else.
+  assert.equal(items.length, 2)
+  assert.deepEqual(items.map((item) => item.url), [official.url, sitemap.url])
+  assert.equal(items[1].via, 'sitemap')
+})
+
+test('heuristicFallback:false disables the per-page fallback (0.6.2)', async () => {
+  const pages = [
+    evidencePage('https://example.com/a', 'Alpha documentation covers the release cadence and the support windows for every major line in detail. '.repeat(2)),
+    evidencePage('https://example.com/b', 'Beta documentation covers the migration path between major versions and the configuration changes involved. '.repeat(2)),
+  ]
+  const client = {
+    jsonCall: async () => ([{
+      claim: 'Alpha documentation exists', quote: 'Alpha documentation covers the release cadence', source: 0, type: 'docs', stance: 'support',
+    }]),
+  }
+  const items = await extractEvidence(pages, { evidence: { heuristicFallback: false } }, { client })
+  assert.equal(items.length, 1)
+  assert.equal(items[0].url, pages[0].url)
 })

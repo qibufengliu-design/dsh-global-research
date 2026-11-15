@@ -543,3 +543,23 @@ test('when all three conflict kinds are empty the brief grows no conflict sectio
   assert.doesNotMatch(plain.brief, /^### /m)
   assert.doesNotMatch(appendConflictSection('## 结论\nx\n\n## 置信度\nmedium', [], [], [], []), /存在冲突/)
 })
+
+test('the funnel line reports official adoption only when first-party pages were read', () => {
+  const stats = {
+    identified: 20, deduped: 12, readable: 9, adopted: 3,
+    officialReadable: 3, officialAdopted: 1,
+    queries: 6, pagesFetched: 9, clusters: 14, elapsedMs: 73000,
+  }
+  const result = buildResult({
+    brief: '## 结论\nok', sources: [], confidence: 'medium', gaps: [], partial: false, depth: 'standard', stats,
+  })
+  // "you read 3 official pages but cited 1" stays visible on the funnel line.
+  assert.match(result.brief, /^> 检索流程：识别 20 篇 · 去重后 12 篇 · 可读 9 篇 · 采用 3 篇 · 官方采用 1\/3$/m)
+  // No official page read → the suffix would be noise, so it is omitted.
+  const none = buildResult({
+    brief: '## 结论\nok', sources: [], confidence: 'medium', gaps: [], partial: false, depth: 'standard',
+    stats: { ...stats, officialReadable: 0, officialAdopted: 0 },
+  })
+  assert.match(none.brief, /^> 检索流程：识别 20 篇 · 去重后 12 篇 · 可读 9 篇 · 采用 3 篇$/m)
+  assert.doesNotMatch(none.brief, /官方采用/)
+})
