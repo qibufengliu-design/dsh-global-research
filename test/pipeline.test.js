@@ -2543,6 +2543,44 @@ test('the answer layer lands in the delivered brief after the retrieval flow (0.
   assert.ok(result.brief.indexOf('## 行动清单') < result.brief.indexOf('## 坑与风险'))
 })
 
+test('a decision run labels unsourced 判据 lines and refuses high on blogs (0.10.1)', async () => {
+  const decisionBrief = [
+    '## 结论',
+    '**一句话：不该拆**（8 人团队，日发布 < 3 次，先把边界理清）。',
+    '',
+    '## 判据',
+    '- 团队 ≥ 8 人且日发布 ≥ 3 次才划算',
+    '- 回滚成本 > 2 人日时不该拆 [S1]',
+    '',
+    '## 行动清单',
+    '- 先拆一个边界清晰的服务试点两周',
+    '',
+    '## 坑与风险',
+    '无',
+  ].join('\n')
+  const config = {
+    ...baseConfig(),
+    __engines: [fakeEngine(['https://a.com/1', 'https://b.com/2'])],
+  }
+  const result = await runResearch({
+    question: '我们团队 8 个人，微服务该不该拆',
+    depth: 'quick',
+    config,
+    llm: fakeLlm(synthFirst(() => decisionBrief)),
+    selection,
+    logger: () => {},
+  })
+  // The kind reaches computeConfidence() through the pipeline, not only through
+  // a direct call: quick depth has no "missing primary" cap, so the legacy
+  // matrix used to hand this run medium on one confirmed cluster of two blogs.
+  assert.equal(result.stats.questionKind, 'decision')
+  assert.equal(result.confidence, 'low')
+  // A 判据 line with no [S#] is the model's judgement, and it says so.
+  assert.match(result.brief, /^- 团队 ≥ 8 人且日发布 ≥ 3 次才划算（推断）$/m)
+  // The cited criteron survives citation hygiene untouched.
+  assert.match(result.brief, /^- 回滚成本 > 2 人日时不该拆 \[S1\]$/m)
+})
+
 test('a compare brief that omits the checklist gets 无 and one confidence notch (0.9.0)', async () => {
   const config = baseConfig()
   config.__fetchPage = compareFetcher()

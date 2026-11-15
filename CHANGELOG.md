@@ -7,6 +7,27 @@
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-16
+
+> 0.10.0 把 C 题（`我们团队 8 个人，微服务该不该拆`）分成了 `decision`，也要求「## 判据」写可量化阈值。回归跑出来的两处漏水都在交付层，不在分类层：其一，判据阈值全是二手页面（github / dev.to / 厂商博客）的说法，提示词要求「无来源的标（推断）」，模型照写数值却没标，简报里于是出现一串看起来有出处的阈值——**没有任何 `[S#]`，也没有任何「（推断）」**；其二，`官方定向 0` 的那次运行仍拿到 `medium`：两条博客域名 `domainTrust` 为 2，刚好过 `strong.size >= 2` 的广度闸门，而 `computeConfidence()` 当时不知道这是一道要下判断的题。本版做两件小事：**判据接地**（`groundCriteria()` 给无引用、无自标来源的判据行补「（推断）」）与**决策类置信度闸门**（`decision` 题没有一手 hostname 时最高 `medium`，广度不足再降 `low`）。
+
+### Added
+
+- **`groundCriteria(brief, sources)`**（`lib/brief.js` 新导出）：在「## 判据」段内逐条检查 `- ` 开头的行——不含 `[S数字]`、也不含 `（推断）`/`(推断)`/`（无来源）`/`(无来源)` 的，行尾追加 `（推断）`；`- 无` 占位不算判据，跳过；段不存在原样返回；幂等（第二遍不再变化）。`[S#]` 为 `grounds` 的条件是该 id 在 `sources` 表里（表为空时不追究），避免「引用了一个会被 `validateCitations()` 删掉的编号」把假引用当成接地。判据段边界到下一个 `^## ` 标题为止，段外的 `[S#]` 与「（无来源）」不受影响。
+- **`buildResult()` 在 `ensureSections()` 之后调用 `groundCriteria()`**：接地发生在 `applyZeroEvidenceOptions()`、`sanitizeCompareTable()`、`markUnsourcedNumbers()` 之前，下游所有层看到的是已接地的文本，交付层不需要第二套判定。
+
+### Changed
+
+- **决策类置信度闸门**（`lib/brief.js` `computeConfidence(clusters, gates, questionKind)`）：新增可选第三参数 `questionKind`（也接受 `gates.questionKind` / `gates.kind`）。当类别为 `decision` 且存活证据里**没有任何 `domainTrust >= 3` 的 hostname**（官方/一手来源）时，基础判级结果最高只到 `medium`，不得给 `high`；若同时 `strong.size < 2`（独立站点广度不足），降为 `low`。闸门在基础判级之后、`missingPrimary` / `missingSections` / `gate` 之前生效，三条既有降档规则照旧叠加，所以最终 verdict 只会更低、不会被这里抬高。其余类别（`concept` / `compare` / `pricing` / `tech-selection` / …）行为完全不变。
+- **`lib/pipeline.js` 传参**：三处 `computeConfidence()` 调用（主路径、`missingSections` 重算、catch 兜底）都补上 `state.questionKind`，决策题不再需要调用方手工传 gates 才能拿到闸门。
+- `docs/architecture.md` 的「decision 类别」一节补两句：判据接地与决策闸门的判定表。
+
+### Tests
+
+- `test/brief.test.js` 59 → 63（+4）：判据无引用补「（推断）」、已有 `[S#]`（且在 sources 内）不动、`- 无` 占位与段外文本不动、已写「（推断）/（无来源）」不重复；幂等；无判据段逐字节原样返回；`decision` 无一手 hostname 时 `high → medium`、广度不足 `→ low`、有官方/一手来源时维持 `high`、其它类别不受影响（位置参数与 `gates.questionKind` / `gates.kind` 三种传法都覆盖）。
+- `test/pipeline.test.js` 90 → 91（+1）：C 题端到端跑 `runResearch({ depth: 'quick' })`，两条博客页面证据下 `stats.questionKind === 'decision'`、`confidence === 'low'`（旧行为是 `medium`）；交付文本里无引用的判据行带「（推断）」，带 `[S1]` 的判据行原样保留。
+- `node scripts/test-all.mjs` 19 个测试文件全绿。
+
 ## [0.10.0] - 2026-11-16
 
 > 0.9.10 把 C 题（`我们团队 8 个人，微服务该不该拆`）的**表列**修对了，**类别**还是错的：`classify()` 对它 8 个类别全 0 分、回落 `concept`（confidence 0.35），cost 列靠 `effectiveCompareColumnKind()` 按措辞升级——那是给「分类器没认出来」的问题垫的一级台阶，不是分类。后果不止表头：提示词没有要求先给判断，检索也没把 query 花在阈值和反例上，出来的简报读起来像概念介绍。本版把这一级台阶补成真类别：`QUESTION_KINDS` 增 `decision`，两档信号词，固定优先级，决策型提示词，必出章节「## 判据」。

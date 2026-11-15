@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ACTION_CHECKLIST_HEADING, appendConflictSection, appendReferences, appendRetrievalFlow, appendStats, applyZeroEvidenceOptions, assignSourceIds, buildResult,
-  checkCompareRows, computeConfidence, COST_OVERVIEW_HEADER, DECISION_CRITERIA_HEADING, ensureSections, fallbackBrief, formatRetrievalFlow, gradeSource, isPriceColumnHeader, markUnsourcedNumbers, missingSections, PRICE_SEE_NOTE, requiredSectionsFor,
+  checkCompareRows, computeConfidence, COST_OVERVIEW_HEADER, DECISION_CRITERIA_HEADING, ensureSections, fallbackBrief, formatRetrievalFlow, gradeSource, groundCriteria, isPriceColumnHeader, markUnsourcedNumbers, missingSections, PRICE_SEE_NOTE, requiredSectionsFor,
   sanitizeCompareTable, UNSOURCED_NUMBER_MARK, validateCitations, zeroEvidenceGapText,
 } from '../lib/brief.js'
 import { findSelfContradictions } from '../lib/assertions.js'
@@ -782,6 +782,90 @@ test('a decision brief owes a 判据 section, filled with 无 and costing one no
   const primary = [0, 1, 2].map((index) => cluster(`claim ${index}`, ['https://eur-lex.europa.eu/x', 'https://arxiv.org/abs/1']))
   assert.equal(computeConfidence(primary), 'high')
   assert.equal(computeConfidence(primary, { missingSections: true }), 'medium')
+})
+
+test('an unsourced 判据 bullet is labeled 推断, a cited one is left alone (0.10.1)', () => {
+  const brief = [
+    '## 结论', '**一句话：不该拆 [S1]。**', '',
+    '## 判据',
+    '- 团队 ≥ 8 人且日发布 ≥ 3 次才划算',
+    '- 回滚成本 > 2 人日时不宜拆 [S1]',
+    '- 无',
+    '',
+    '## 置信度', 'medium',
+  ].join('\n')
+  const sources = [{ id: 'S1', url: 'https://a.com/x', title: 'A' }]
+  const grounded = groundCriteria(brief, sources)
+  assert.match(grounded, /^- 团队 ≥ 8 人且日发布 ≥ 3 次才划算（推断）$/m)
+  // A line that cites a real source is a finding, not a judgement.
+  assert.match(grounded, /^- 回滚成本 > 2 人日时不宜拆 \[S1\]$/m)
+  // `- 无` is the empty-section placeholder, not a criterion.
+  assert.match(grounded, /^- 无$/m)
+  assert.ok(!grounded.includes('- 无（推断）'))
+  assert.ok(!grounded.includes('不该拆 [S1]（推断）'), 'the conclusion is outside 判据')
+  // A mark the model already wrote is never doubled.
+  const written = '## 判据\n- 阈值（推断）\n- 阈值 2（无来源）\n- 阈值 3 (推断)'
+  assert.equal(groundCriteria(written, []), written)
+  // A [S#] that is not in the source table grounds nothing: citation hygiene
+  // would drop it, so the criterion would read as sourced while citing air.
+  assert.match(
+    groundCriteria('## 判据\n- 阈值 [S9]', sources),
+    /^- 阈值 \[S9\]（推断）$/m,
+  )
+
+  // buildResult() applies it to the delivered text, not only to a dry run.
+  const result = buildResult({
+    brief: '## 结论\n不该拆 [S1]\n\n## 判据\n- 团队 ≥ 8 人且日发布 ≥ 3 次才划算\n\n## 置信度\nhigh',
+    sources: [], confidence: 'medium', gaps: [], partial: false, depth: 'quick',
+    stats: { questionKind: 'decision', queries: 1, pagesFetched: 1, llmRounds: 1, elapsedMs: 5 },
+  })
+  assert.match(result.brief, /^- 团队 ≥ 8 人且日发布 ≥ 3 次才划算（推断）$/m)
+})
+
+test('criteria grounding is idempotent (0.10.1)', () => {
+  const once = groundCriteria('## 判据\n- 团队 ≥ 8 人', [])
+  assert.equal(once, '## 判据\n- 团队 ≥ 8 人（推断）')
+  assert.equal(groundCriteria(once, []), once)
+})
+
+test('a brief without a 判据 section is returned byte for byte (0.10.1)', () => {
+  const brief = '## 结论\n不该拆\n\n## 置信度\nlow'
+  assert.equal(groundCriteria(brief, []), brief)
+  assert.equal(groundCriteria('', []), '')
+  // The section ends at the next heading: later bullets are not criteria.
+  const withTail = '## 判据\n- 阈值\n\n## 行动清单\n- 先试点两周'
+  assert.equal(groundCriteria(withTail, []), '## 判据\n- 阈值（推断）\n\n## 行动清单\n- 先试点两周')
+})
+
+test('a decision verdict needs a first-party host to be high, thin breadth is low (0.10.1)', () => {
+  // A real first-party host keeps the legacy verdict, whichever way the kind
+  // arrives (positional argument, gates.questionKind, gates.kind).
+  const primary = [0, 1, 2].map((index) => cluster(`claim ${index}`, ['https://eur-lex.europa.eu/x', 'https://arxiv.org/abs/1']))
+  assert.equal(computeConfidence(primary), 'high')
+  assert.equal(computeConfidence(primary, {}, 'decision'), 'high')
+  assert.equal(computeConfidence(primary, { questionKind: 'decision' }), 'high')
+  assert.equal(computeConfidence(primary, { kind: 'decision' }), 'high')
+
+  // Papers count as primary-grade for the untouched "high" rule (primary.size
+  // = 2), but no host here clears domainTrust 3: a paper can describe the
+  // trade-off, it cannot decide for the team.
+  const papers = [
+    cluster('a', ['https://arxiv.org/abs/2401.00001', 'https://github.com/nodejs/release']),
+    cluster('b', ['https://doi.org/10.1000/x', 'https://github.com/other/repo']),
+    cluster('c', ['https://arxiv.org/abs/2401.00002', 'https://doi.org/10.1000/y']),
+  ]
+  assert.equal(computeConfidence(papers), 'high')
+  assert.equal(computeConfidence(papers, {}, 'decision'), 'medium')
+  assert.equal(computeConfidence(papers, { questionKind: 'decision' }), 'medium')
+  // Other kinds are untouched: no gate widens or narrows them.
+  assert.equal(computeConfidence(papers, {}, 'tech-selection'), 'high')
+  assert.equal(computeConfidence(papers, {}, 'concept'), 'high')
+
+  // Breadth below two independent sites is not evidence even for "medium".
+  const thin = [cluster('only', ['https://arxiv.org/abs/2401.00001', 'https://doi.org/10.1000/x'])]
+  assert.equal(computeConfidence(thin), 'medium')
+  assert.equal(computeConfidence(thin, {}, 'decision'), 'low')
+  assert.equal(computeConfidence([], {}, 'decision'), 'low')
 })
 
 test('uncited numbers in the compare table are marked, cited ones are left alone (0.9.0)', () => {
