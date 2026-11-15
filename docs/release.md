@@ -17,7 +17,7 @@
 每版按顺序做完，缺一项不算发布：
 
 1. **实现 + 测试**：`node scripts/test-all.mjs` 全绿，新增行为必须有测试。测试总数以脚本输出为准，不要在任何文档里写死数字。
-2. **仓库整洁性与发布一致性**：`node scripts/check-docs.mjs`（必需文件、相对链接、CHANGELOG 版本条目、零依赖、package.json 元数据、Issue 表单结构）与 `node scripts/check-release.mjs`（版本号与 CHANGELOG 小节、小节顺序、README 预算表与 `lib/pipeline.js` 的 `DEPTH_PROFILES` 一致、文档里没有写死的测试例数）都要通过。
+2. **仓库整洁性与发布一致性**：`node scripts/check-docs.mjs`（必需文件、相对链接、CHANGELOG 版本条目、零依赖、package.json 元数据、Issue 表单结构）与 `node scripts/check-release.mjs`（版本号与 CHANGELOG 小节、小节顺序、小节非空且不重复、README 预算表与 `lib/pipeline.js` 的 `DEPTH_PROFILES` 一致、文档里没有写死的测试例数）都要通过。
 3. **真实网络回归**：至少跑一次 `retrieval-check`（A 题：RAG 选型）与一次 B/C 题；跑不动就记录「未运行 + 原因」，不允许编造结论。结论写到 `D:\Total\docs\superpowers\specs\` 下的回归文档。
 4. **版本号**：改 `package.json.version`。
 5. **CHANGELOG**：在 `CHANGELOG.md` 顶部新增 `## [x.y.z] - YYYY-MM-DD`，分类用 `Added` / `Changed` / `Fixed` / `Removed` / `Security`；写清「为什么」和实测数字，不只写「优化了 X」。

@@ -185,7 +185,7 @@ Web 端不再是通用工具行，而是一张卡片：置信度徽章（高/中
 node scripts/test-all.mjs       # 逐文件跑全部测试（沙箱里 node --test test/ 会 spawn EPERM）
 node --check index.js client.js
 node scripts/check-docs.mjs     # 仓库整洁性：必需文件、相对链接、CHANGELOG、零依赖、Issue 表单结构
-node scripts/check-release.mjs  # 发布一致性：版本号、CHANGELOG 小节、预算表与代码一致
+node scripts/check-release.mjs  # 发布一致性：版本号、CHANGELOG 小节（非空、不重复、从新到旧）、预算表与代码一致
 ```
 
 - 目录结构、调试技巧、`retrieval-check` 与真实网络 e2e：见 [docs/development.md](docs/development.md)。

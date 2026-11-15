@@ -51,6 +51,20 @@ export function parseReadmeBudgets(markdown) {
   return Object.keys(budgets).length > 0 ? budgets : null;
 }
 
+/** 把 CHANGELOG 切成 {version, body} 列表（不含 Unreleased），body 是到下一个 `## [` 之前的内容。 */
+export function releaseSections(markdown) {
+  const text = String(markdown || '');
+  const sections = [];
+  const heading = /^## \[(\d+\.\d+\.\d+)\][^\n]*$/gm;
+  const matches = [...text.matchAll(heading)];
+  for (let index = 0; index < matches.length; index += 1) {
+    const start = matches[index].index + matches[index][0].length;
+    const end = index + 1 < matches.length ? matches[index + 1].index : text.length;
+    sections.push({ version: matches[index][1], body: text.slice(start, end).trim() });
+  }
+  return sections;
+}
+
 /** 找出文档里写死的测试例数（如「352 例」），这种数字每加一个测试就会过期。 */
 export function staleTestCounts(text) {
   const hits = [];
@@ -142,6 +156,16 @@ export function checkRelease(root = DEFAULT_ROOT) {
     failures.push('CHANGELOG 版本小节不是从新到旧排列');
   } else if (sectionVersions.length > 0) {
     passes.push(`CHANGELOG 版本小节按新到旧排列（${sectionVersions.length} 条）`);
+  }
+
+  const sections = releaseSections(changelog);
+  const duplicated = [...new Set(sectionVersions.filter((v, i) => sectionVersions.indexOf(v) !== i))];
+  if (duplicated.length) failures.push(`CHANGELOG 有重复的版本小节：${duplicated.join('、')}`);
+  const emptySections = sections.filter((section) => !section.body).map((section) => section.version);
+  if (emptySections.length) {
+    failures.push(`CHANGELOG 里这些版本小节是空的（发 Release 时正文会为空）：${emptySections.join('、')}`);
+  } else if (sections.length) {
+    passes.push(`CHANGELOG 每个版本小节都有正文（${sections.length} 个）`);
   }
 
   const profiles = parseDepthProfiles(readFile(root, 'lib/pipeline.js') ?? '');

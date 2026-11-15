@@ -9,6 +9,7 @@ import {
   checkRelease,
   parseDepthProfiles,
   parseReadmeBudgets,
+  releaseSections,
   staleTestCounts,
 } from '../scripts/check-release.mjs'
 import { extractReleaseNotes } from '../scripts/release-notes.mjs'
@@ -56,6 +57,75 @@ test('checkRepository reports missing files instead of throwing', () => {
     const { failures } = checkRepository(dir)
     assert.ok(failures.some((line) => line.includes('缺少必需文件')), failures.join('\n'))
     assert.ok(failures.some((line) => line.includes('CHANGELOG.md')), failures.join('\n'))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('releaseSections splits versions and keeps their bodies', () => {
+  const markdown = [
+    '# Changelog',
+    '',
+    '## [Unreleased]',
+    '',
+    '- pending',
+    '',
+    '## [2.0.0] - 2026-02-02',
+    '',
+    '### Added',
+    '',
+    '- big one',
+    '',
+    '## [1.9.0] - 2026-01-01',
+    '',
+    '- small one',
+    '',
+  ].join('\n')
+  const sections = releaseSections(markdown)
+  assert.deepEqual(
+    sections.map((section) => section.version),
+    ['2.0.0', '1.9.0']
+  )
+  assert.match(sections[0].body, /big one/)
+  assert.doesNotMatch(sections[0].body, /small one/)
+})
+
+test('checkRelease flags duplicated and empty CHANGELOG sections', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-sections-'))
+  try {
+    mkdirSync(join(dir, 'lib'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ version: '9.9.9', name: 'fixture' }))
+    writeFileSync(
+      join(dir, 'CHANGELOG.md'),
+      [
+        '# Changelog',
+        '',
+        '## [Unreleased]',
+        '',
+        '## [9.9.9] - 2026-01-01',
+        '',
+        '- ship it',
+        '',
+        '## [9.9.9] - 2025-12-31',
+        '',
+        '## [9.9.8] - 2025-12-01',
+        '',
+        '- old',
+        '',
+      ].join('\n')
+    )
+    writeFileSync(
+      join(dir, 'lib/pipeline.js'),
+      'export const DEPTH_PROFILES = {\n  quick: { queries: 2, pages: 3, llmCalls: 6, gapRounds: 0, wallMs: 120000 },\n  standard: { queries: 6, pages: 12, llmCalls: 14, gapRounds: 1, wallMs: 240000 },\n  deep: { queries: 16, pages: 30, llmCalls: 28, gapRounds: 1, wallMs: 360000 },\n}\n'
+    )
+    writeFileSync(
+      join(dir, 'README.md'),
+      '| depth | queries | pages | LLM 轮 | 补搜轮 | 墙钟 |\n|---|---|---|---|---|---|\n| quick | 2 | 3 | 6 | 0 | 120s |\n| standard | 6 | 12 | 14 | 1 | 240s |\n| deep | 16 | 30 | 28 | 1 | 360s |\n'
+    )
+    const { failures } = checkRelease(dir)
+    const joined = failures.join('\n')
+    assert.match(joined, /重复的版本小节：9\.9\.9/, joined)
+    assert.match(joined, /空的（发 Release 时正文会为空）：9\.9\.9/, joined)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
