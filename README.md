@@ -240,6 +240,12 @@ API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会
 ![输入框右侧的深度胶囊](docs/screenshots/03-composer.png)
 ## 更新日志
 
+### 0.3.0（2026-11-15）
+
+- 新增 **docs 垂直源**：React/Node/TS 类问题直连 MDN 搜索，Spring 与 Python 类问题直接给出官方文档入口。
+- GitHub 源增加 **code search 回退**：issues 与仓库都空时按代码片段找"别人怎么写"。
+- 付费引擎增加 **配额保护**：Tavily/Brave/Serper/Exa 有进程内用量上限，超限自动禁用并在 `stats.engineQuota` 暴露。
+
 ### 0.2.0（2026-11-15）
 
 - **准确性**：证据按发布日期加权（≤1 年加分、>2 年降权并标「旧」）；同一事实出现分歧时强制输出「## 存在冲突」段，列出双方与来源，不抹平。
