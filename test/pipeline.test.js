@@ -1169,3 +1169,62 @@ test('a stale hit is pushed out of the selection when candidates are plentiful (
   assert.ok(!fetched.includes(stale), fetched.join(' | '))
   assert.ok(fetched.includes('https://nodejs.org/en/learn/typescript/introduction'), fetched.join(' | '))
 })
+
+test('a page that declares itself retired never becomes evidence (0.6.6)', async () => {
+  const node = 'Node 22 entered LTS in October 2025. Node 22 is the active LTS line and keeps receiving security fixes until April 2027; after that it moves to maintenance. A team picking a runtime for a new backend service should weigh that remaining window against its upgrade cadence.'
+  const config = baseConfig()
+  config.__engines = [{
+    name: 'fake',
+    available: () => true,
+    search: async () => [
+      { url: 'https://nodejs.org/1', title: 'Node 22 release notes', snippet: 'node lts schedule', engine: 'fake', rank: 1 },
+      { url: 'https://github.com/x/old-repo', title: 'GitHub - x/old-repo', snippet: '本项目已过期，不再维护', engine: 'fake', rank: 2 },
+      { url: 'https://a.com/3', title: 'Node LTS documentation', snippet: 'node docs', engine: 'fake', rank: 3 },
+    ],
+  }]
+  config.__fetchPage = async (url) => {
+    const retired = url.includes('old-repo')
+    return {
+      url, finalUrl: url,
+      title: `page ${url}`,
+      domain: new URL(url).hostname,
+      text: retired ? '本项目已过期，不再维护。历史许可证价格 199 元/年，仅存档。' : node,
+      ok: true,
+    }
+  }
+  const result = await runResearch({
+    question: 'Node 22 是 LTS 吗？项目该用哪个版本',
+    depth: 'standard',
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.equal(result.partial, false)
+  assert.ok(result.sources.length >= 1, 'readable pages still carry the brief')
+  assert.ok(!result.sources.some((source) => source.url.includes('old-repo')), 'the retired page is not adopted')
+  assert.ok(result.gaps.some((gap) => gap.includes('仅有过期来源')), result.gaps.join(' | '))
+  assert.match(result.brief, /## 参考/)
+})
+
+test('when every readable page is retired evidence survives, flagged stale (0.6.6)', async () => {
+  const node = 'Node 22 entered LTS in October 2025. Node 22 is the active LTS line and keeps receiving security fixes until April 2027; after that it moves to maintenance. A team picking a runtime for a new backend service should weigh that remaining window against its upgrade cadence.'
+  const config = baseConfig()
+  config.__engines = [fakeEngine(['https://github.com/x/old-1', 'https://github.com/y/old-2'])]
+  config.__fetchPage = async (url) => ({
+    url, finalUrl: url, title: '本项目已过期，不再维护', domain: new URL(url).hostname, text: node, ok: true,
+  })
+  const result = await runResearch({
+    question: 'Node 22 是 LTS 吗？项目该用哪个版本',
+    depth: 'standard',
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.equal(result.partial, false)
+  assert.ok(result.sources.length >= 1, 'a dead-only run still reports what it read')
+  assert.ok(result.gaps.some((gap) => gap.includes('唯一可读来源已过期')), result.gaps.join(' | '))
+  assert.equal(result.confidence, 'low', 'stale cards cannot lift the verdict')
+  assert.match(result.brief, /（已过期，仅作参考）/)
+})

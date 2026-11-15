@@ -53,3 +53,15 @@ test('synthesis prompt forces a currency column and forbids cross-currency compa
   // The rule must not weaken the numeric-cell citation rule it sits next to.
   assert.ok(prompt.includes('必须紧跟 [S#]'), 'the [S#] requirement is missing')
 })
+
+test('evidence prompt marks retired pages so the model does not prop claims on them (0.6.6)', () => {
+  const prompt = evidencePrompt({
+    pages: [
+      page('https://github.com/old/repo', 'Node 文档仍在维护。'),
+      { ...page('https://github.com/dead/repo'), stale: true },
+    ],
+  })
+  assert.match(prompt, /\[页面 1\][^\n]*⚠ 已过期\/停维护/)
+  assert.doesNotMatch(prompt.split('\n').find((line) => line.startsWith('[页面 0]')), /已过期/)
+  assert.ok(prompt.includes('不要用它支撑当前状态'), 'the stale-citation rule is missing')
+})

@@ -582,3 +582,39 @@ test('the funnel line reports official adoption only when first-party pages were
   assert.match(none.brief, /^> 检索流程：识别 20 篇 · 去重后 12 篇 · 可读 9 篇 · 采用 3 篇$/m)
   assert.doesNotMatch(none.brief, /官方采用/)
 })
+
+test('stale sources cannot lift the confidence verdict (0.6.6)', () => {
+  const clusters = [
+    cluster('Spring AI 由官方维护', ['https://ec.europa.eu/a', 'https://eur-lex.europa.eu/b']),
+    cluster('Spring AI 1.0 已发布', ['https://ec.europa.eu/c', 'https://eur-lex.europa.eu/d']),
+    cluster('Spring AI 支持 RAG', ['https://ec.europa.eu/e', 'https://eur-lex.europa.eu/f']),
+  ]
+  assert.equal(computeConfidence(clusters), 'high')
+  // The pipeline's cluster status still says "confirmed"; the stale cards must be
+  // discounted before counting confirmed clusters or primary domains.
+  const retired = clusters.map((item) => ({
+    ...item,
+    evidence: item.evidence.map((evidence) => ({ ...evidence, stale: true })),
+  }))
+  assert.equal(computeConfidence(retired), 'low')
+  // One live card per claim is not two independent sources either.
+  const mixed = retired.map((item) => ({
+    ...item,
+    evidence: [item.evidence[0], { ...item.evidence[1], stale: false }],
+  }))
+  assert.equal(computeConfidence(mixed), 'low')
+})
+
+test('reference lines mark retired sources as 已过期 (0.6.6)', () => {
+  const sources = assignSourceIds([
+    cluster('Node 22 是 LTS', ['https://nodejs.org/en/about/previous-releases', 'https://github.com/old/repo']),
+  ])
+  const text = appendReferences('## 结论\nNode 22 是 LTS。', sources, [
+    { url: 'https://nodejs.org/en/about/previous-releases' },
+    { url: 'https://github.com/old/repo', stale: true },
+  ])
+  const retired = text.split('\n').find((line) => line.includes('github.com/old/repo'))
+  const fresh = text.split('\n').find((line) => line.includes('nodejs.org'))
+  assert.match(retired, /（已过期，仅作参考）$/)
+  assert.doesNotMatch(fresh, /已过期/)
+})
