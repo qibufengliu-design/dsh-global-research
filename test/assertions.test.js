@@ -189,3 +189,97 @@ test('reads numbers from the full claim+quote join instead of a truncated prefix
   assert.equal(assertions[0].value, '0.2')
   assert.equal(assertions[0].unit, '元/百万 tokens')
 })
+
+test('reports a capacity conflict when the official output limit differs from a third-party measurement', () => {
+  // The regression that motivated capacity extraction: the report quoted
+  // "官方输出上限 384K [S1] vs 第三方 256K [S4]" but neither number was ever
+  // compared, because 384K tokens is not a price, version, date, rate or headcount.
+  const conflicts = findAssertionConflicts([
+    card('https://platform.example.com/docs/models', '官方输出上限 384K tokens', '2025-10-01'),
+    card('https://bench.example.org/review', '第三方实测输出上限 256K tokens', '2025-10-20'),
+  ])
+  assert.equal(conflicts.length, 1)
+  assert.equal(conflicts[0].attribute, '输出上限')
+  assert.equal(conflicts[0].unitMismatch, false)
+  assert.deepEqual(
+    conflicts[0].values.map((entry) => `${entry.value} ${entry.unit}`),
+    ['384K tokens', '256K tokens'],
+  )
+  assert.deepEqual(
+    conflicts[0].values.map((entry) => entry.source),
+    ['platform.example.com', 'bench.example.org'],
+  )
+})
+
+test('normalises 输出上限 and max_output_tokens into one property before comparing', () => {
+  const conflicts = findAssertionConflicts([
+    card('https://platform.example.com/docs/models', '官方输出上限 384K tokens'),
+    card('https://api.example.com/models', 'max_output_tokens: 256000'),
+  ])
+  assert.equal(conflicts.length, 1)
+  assert.equal(conflicts[0].attribute, '输出上限')
+  assert.deepEqual(conflicts[0].values.map((entry) => entry.value), ['384K', '256000'])
+  // Sabotage check: the two properties must not both be reported under their raw
+  // wording, which is what happened before normalisation.
+  assert.equal(conflicts[0].values.length, 2)
+})
+
+test('converts K, M and 万 to one magnitude before comparing', () => {
+  // 1M tokens and 1000K tokens are the same budget, not a disagreement.
+  assert.deepEqual(findAssertionConflicts([
+    card('https://a.com/x', '输出上限 1M tokens'),
+    card('https://b.com/x', '输出上限 1000K tokens'),
+  ]), [])
+  assert.deepEqual(findAssertionConflicts([
+    card('https://a.com/x', '上下文窗口 128 万 tokens'),
+    card('https://b.com/x', '上下文窗口 1280K tokens'),
+  ]), [])
+  const conflicts = findAssertionConflicts([
+    card('https://a.com/x', '输出上限 1M tokens'),
+    card('https://b.com/x', '输出上限 512K tokens'),
+  ])
+  assert.equal(conflicts.length, 1)
+  assert.deepEqual(
+    conflicts[0].values.map((entry) => `${entry.value} ${entry.unit}`),
+    ['1M tokens', '512K tokens'],
+  )
+})
+
+test('takes the newer value on the same page instead of calling it a conflict', () => {
+  // Same host and same URL: the page was revised, so the newer number wins.
+  assert.deepEqual(findAssertionConflicts([
+    card('https://platform.example.com/docs/models', '输出上限 256K tokens', '2025-01-05'),
+    card('https://platform.example.com/docs/models/', '输出上限 384K tokens', '2025-06-20'),
+  ]), [])
+})
+
+test('flags values it cannot convert instead of ranking them', () => {
+  const conflicts = findAssertionConflicts([
+    card('https://a.com/x', '缓存容量 512 MB'),
+    card('https://b.com/x', '缓存容量 512K tokens'),
+  ])
+  assert.equal(conflicts.length, 1)
+  assert.equal(conflicts[0].unitMismatch, true)
+  assert.deepEqual(
+    conflicts[0].values.map((entry) => `${entry.value} ${entry.unit}`),
+    ['512 MB', '512K tokens'],
+  )
+})
+
+test('does not read headcounts, percentages or prices as capacity', () => {
+  for (const claim of [
+    '支持 12 人协作，最多 10 万人同时在线',
+    '90% 的受访者支持该方案',
+    '输入价格为 0.2 元/百万 tokens',
+  ]) {
+    assert.deepEqual(ofKind(extractAssertions(card('https://a.com/x', claim)), 'capacity'), [], claim)
+  }
+  // A headcount still conflicts as a headcount — capacity extraction must not
+  // swallow it or change the kind that reports it.
+  const conflicts = findAssertionConflicts([
+    card('https://a.com/x', '支持 12 人协作'),
+    card('https://b.com/x', '支持 20 人协作'),
+  ])
+  assert.ok(conflicts.length >= 1)
+  assert.ok(conflicts.every((conflict) => conflict.values.every((entry) => entry.unit !== 'tokens')))
+})

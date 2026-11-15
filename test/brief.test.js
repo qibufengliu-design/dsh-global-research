@@ -320,6 +320,30 @@ test('buildResult exposes the conflict lines next to the brief', () => {
   assert.match(result.brief, /## 存在冲突/m)
 })
 
+test('numeric conflicts are listed before stance conflicts in 存在冲突', () => {
+  const clusters = [disputedCluster('Node 22 的维护期到 2027 年', ['https://nodejs.org/x', 'https://blog.example.com/y'])]
+  const sources = assignSourceIds(clusters)
+  const numeric = [{
+    attribute: '输出上限',
+    unitMismatch: false,
+    values: [
+      { value: '384K', unit: 'tokens', source: 'S1' },
+      { value: '256K', unit: 'tokens', source: 'S2' },
+    ],
+  }]
+  const brief = ensureSections('## 结论\nx [S1][S2]\n\n## 置信度\nmedium', 'medium', [], clusters, null, numeric)
+  assert.match(brief, /^## 存在冲突$/m)
+  assert.ok(brief.indexOf('- 输出上限：') < brief.indexOf('（支持）— [S1] nodejs.org'))
+  assert.match(brief, /输出上限：384K tokens（\[S1\]） · 256K tokens（\[S2\]）/m)
+  // result.conflicts mirrors the rendered section, so the order is the same.
+  const result = buildResult({
+    brief: '## 结论\nx [S1][S2]', sources, confidence: 'medium', gaps: [], partial: false, depth: 'quick',
+    conflicts: clusters, assertionConflicts: numeric,
+  })
+  assert.ok(result.conflicts[0].startsWith('- 输出上限：'), result.conflicts[0])
+  assert.equal(result.conflicts.length, 3)
+})
+
 test('ensureSections adds a fallback 下一步建议 when the model omitted it', () => {
   const brief = ensureSections('## 结论\nx\n\n## 置信度\nmedium', 'medium', [])
   assert.match(brief, /^## 下一步建议\n- 按「未解决」逐条补一轮定向检索，或把关键页面 URL 直接贴进问题重查$/m)
