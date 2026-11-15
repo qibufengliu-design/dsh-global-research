@@ -15,6 +15,15 @@ import { validateConfig } from './lib/config.js'
 import { Config } from './lib/schema.js'
 import { configureDomainTrust, isTimeSensitive, uniqueStrings } from './lib/util.js'
 import { normalizeMode } from './lib/strategy.js'
+import { readFileSync } from 'node:fs';
+
+const BUILD_ID = (() => {
+  try {
+    return JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version ?? '0';
+  } catch {
+    return '0';
+  }
+})();
 
 export const inject = ['tools']
 
@@ -223,7 +232,7 @@ export function apply(ctx, rawConfig = {}) {
       // "Latest / price / version" answers go stale in minutes; never serve
       // those from cache (a false positive only costs one re-run).
       const timeSensitive = isTimeSensitive(`${question} ${focus.join(' ')}`)
-      const key = cache && !timeSensitive && !context && !resume ? cacheKey({ question, depth, focus, language: outputLanguage, mode }) : undefined
+      const key = cache && !timeSensitive && !context && !resume ? cacheKey({ question, depth, focus, language: outputLanguage, mode, signalVersion: BUILD_ID }) : undefined
       if (cache && key) {
         const cached = cache.get(key)
         if (cached) {
