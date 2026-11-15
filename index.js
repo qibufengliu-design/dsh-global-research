@@ -256,12 +256,15 @@ export function apply(ctx, rawConfig = {}) {
       if (result.depthUsed === 'deep') countDeep(exec?.agent)
       // Cache before appending debug stats: the stored copy must not accumulate
       // per-call numbers, and partial runs may be missing evidence.
-      if (cache && key && !result.partial) cache.set(key, JSON.parse(JSON.stringify(result)))
       // Store only runs that produced evidence: an empty session would make the
       // next follow-up "reuse" nothing but still claim a resume happened.
       if (nextSession && (nextSession.pages?.length ?? 0) > 0) {
         result.researchId = sessions.create(nextSession)
+        // The model only sees the rendered brief, so the id has to be in it;
+        // the schema field alone is invisible to the caller.
+        result.brief += `\n\n> 研究会话：${result.researchId}（追问时把它作为 researchId 传回，可复用本轮已读页面，只补新缺口，30 分钟内有效）`
       }
+      if (cache && key && !result.partial) cache.set(key, JSON.parse(JSON.stringify(result)))
       if (config.debugStats) {
         const stats = result.stats ?? {}
         // Query/page/evidence/second counts already live in the brief's fixed

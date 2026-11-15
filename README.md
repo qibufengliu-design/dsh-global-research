@@ -47,10 +47,11 @@ plugin_manager set_plugin target: include:global-research enabled: true
 - `focus`：评估维度，参与 query 生成与结果排序。
 - `outputLanguage`：`zh` / `en` / `auto`。
 - `context`（可选，≤2000 字）：追问上一轮结果时，把被指代的结论/证据原文附进来。research 看不到对话历史；带 context 的调用不走缓存。
+- `researchId`（可选）：上一轮返回的会话 id（简报末尾 `> 研究会话：rs_…` 那行）。传回来即"续跑"：复用上一轮已读的页面与证据，只补新缺口，通常快 2–3 倍；30 分钟内有效，过期或不存在会静默回退成全新研究。
 
-返回对象含 `brief`（Markdown）、`confidence`、`sources`、`gaps`、`partial`、`depthUsed`、`stats`；工具界面只展示简报。
+返回对象含 `brief`（Markdown）、`confidence`、`sources`、`gaps`、`partial`、`depthUsed`、`researchId`、`stats`；工具界面只展示简报。
 
-简报末尾（「参考」之后）固定带一行运行统计，例如 `> 本次检索：6 个查询 · 9 个页面 · 14 条证据 · 73 秒（标准档）`——不用打开 `debugStats` 也能看到这次查了多少、抓了多少、用了多久；同一结果重复渲染不会出现两行。Web 卡片会把这一行解析成标题下方的小字徽章。
+简报末尾（「参考」之后）固定带一行运行统计，例如 `> 本次检索：6 个查询 · 9 个页面 · 14 条证据 · 73 秒（标准档）`——不用打开 `debugStats` 也能看到这次查了多少、抓了多少、用了多久；续跑时页面数只算新抓的，并标注 `· 复用 N 页`。同一结果重复渲染不会出现两行。Web 卡片会把这一行解析成标题下方的小字徽章。
 
 ## 预算
 
