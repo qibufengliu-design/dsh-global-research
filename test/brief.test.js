@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ACTION_CHECKLIST_HEADING, appendConflictSection, appendReferences, appendRetrievalFlow, appendStats, applyZeroEvidenceOptions, assignSourceIds, buildResult,
-  checkCompareRows, computeConfidence, COST_OVERVIEW_HEADER, DECISION_CRITERIA_HEADING, ensureSections, fallbackBrief, fillEmptyCompareCells, formatRetrievalFlow, gradeSource, groundCriteria, isPriceColumnHeader, markUnsourcedNumbers, missingSections, PRICE_SEE_NOTE, requiredSectionsFor,
+  checkCompareRows, computeConfidence, COST_MISSING_CELL, COST_OVERVIEW_HEADER, COST_OVERVIEW_NOTE, DECISION_CRITERIA_HEADING, ensureSections, fallbackBrief, fillEmptyCompareCells, formatRetrievalFlow, gradeSource, groundCriteria, isPriceColumnHeader, markUnsourcedNumbers, missingSections, PRICE_SEE_NOTE, requiredSectionsFor,
   sanitizeCompareTable, UNSOURCED_NUMBER_MARK, validateCitations, zeroEvidenceGapText,
 } from '../lib/brief.js'
 import { findSelfContradictions } from '../lib/assertions.js'
@@ -1192,7 +1192,9 @@ test('the delivered 成本概览 no longer re-marks 未核实 after sanitize (0.
 // filler reuses what the evidence already says about each option instead of
 // throwing the cells away, and picks the claim by column semantics.
 function fillTable(rows, header = '| 方案 | 优势 | 风险 | 适用场景 |') {
-  return ['## 方案对比', header, '| --- | --- | --- | --- |', ...rows, '', '## 置信度', 'low'].join('\n')
+  const columns = header.split('|').length - 2
+  const separator = `| ${Array.from({ length: columns }, () => '---').join(' | ')} |`
+  return ['## 方案对比', header, separator, ...rows, '', '## 置信度', 'low'].join('\n')
 }
 
 function fillClusters() {
@@ -1260,6 +1262,110 @@ test('filling empty compare cells is idempotent and never invents a claim (1.0.1
   assert.equal(bun, '| bun | 无证据 | 无证据 | 无证据 |')
   // A table without the heading is returned untouched.
   assert.equal(fillEmptyCompareCells('## 结论\nok', fillClusters(), ['Spring AI']), '## 结论\nok')
+})
+
+// 1.0.2 — the reported selection run filled both 成本概览 cells of
+// `| 方案 | 优势 | 风险 | 适用场景 | 成本概览 |` with capability descriptions
+// ("Advisors API 用于拦截增强") plus [S#]. The cell looked like cost data but said
+// nothing about money: the column now only accepts cost-bearing claims and states
+// the absence otherwise.
+const costCellOf = (line) => line.split('|').slice(-2)[0].trim()
+
+function costTable() {
+  return fillTable([
+    '| Spring AI | 无证据 | 无证据 | 无证据 | 无证据 |',
+    '| LangChain4j | 无证据 | 无证据 | 无证据 | 无证据 |',
+  ], COST_COLUMNS_5)
+}
+
+function costClaimClusters() {
+  return [...fillClusters(), {
+    claim: 'Spring AI 按量计费，0.2 元/千 tokens',
+    evidence: [
+      { id: 'S6', claim: 'Spring AI 按量计费，0.2 元/千 tokens', url: 'https://docs.spring.io/spring-ai/reference/pricing.html' },
+    ],
+  }, {
+    claim: 'LangChain4j 免费（Apache-2.0）',
+    evidence: [
+      { id: 'S7', claim: 'LangChain4j 免费（Apache-2.0）', url: 'https://docs.langchain4j.dev/pricing/' },
+    ],
+  }]
+}
+
+test('a 成本概览 cell never borrows a capability claim (1.0.2)', () => {
+  const filled = fillEmptyCompareCells(costTable(), fillClusters(), ['Spring AI', 'LangChain4j'])
+  const lines = filled.split('\n')
+  for (const name of ['Spring AI', 'LangChain4j']) {
+    const line = lines.find((row) => row.startsWith(`| ${name} |`))
+    assert.ok(line, `${name} row is gone`)
+    assert.equal(costCellOf(line), COST_MISSING_CELL, `${name} 成本概览 borrowed a capability claim: ${line}`)
+    assert.doesNotMatch(costCellOf(line), /ChatClient|向量库|搭建原型|迁移/, 'a capability claim landed in the cost column')
+  }
+  // The other columns keep the 1.0.1 fill: the fix is scoped to the cost column.
+  assert.match(filled, /ChatClient 抽象[^|]*\[S1\]/)
+  assert.match(filled, /需要 Java 17/)
+  assert.match(filled, /适合已经使用 Spring 后端/)
+  // The note is appended once, under the table, and only for a fully missing column.
+  assert.equal(filled.split(COST_OVERVIEW_NOTE).length - 1, 1, 'the cost note must appear exactly once')
+  assert.ok(lines.indexOf(COST_OVERVIEW_NOTE) > lines.findIndex((line) => line.startsWith('| LangChain4j |')), 'the note must sit under the table')
+  assert.equal(fillEmptyCompareCells(filled, fillClusters(), ['Spring AI', 'LangChain4j']), filled, 'second pass changes nothing')
+})
+
+test('cost-bearing claims fill the 成本概览 column normally (1.0.2)', () => {
+  const filled = fillEmptyCompareCells(costTable(), costClaimClusters(), ['Spring AI', 'LangChain4j'])
+  const ai = costCellOf(filled.split('\n').find((line) => line.startsWith('| Spring AI |')))
+  const lc = costCellOf(filled.split('\n').find((line) => line.startsWith('| LangChain4j |')))
+  assert.match(ai, /按量计费|0\.2 元\/千 tokens/)
+  assert.match(ai, /\[S6\]/)
+  assert.match(lc, /免费/)
+  assert.match(lc, /\[S7\]/)
+  assert.ok(!filled.includes(COST_MISSING_CELL), 'a cost-bearing claim must not be replaced by the missing placeholder')
+  assert.ok(!filled.includes(COST_OVERVIEW_NOTE), 'the note must not fire when the column has cost evidence')
+})
+
+test('the cost note needs the whole column to lack cost evidence (1.0.2)', () => {
+  // Only Spring AI has a price claim: the other cell is missing, but the column is
+  // not empty, so the report-level note would be wrong.
+  const clusters = [...fillClusters(), costClaimClusters().find((cluster) => cluster.claim.includes('按量计费'))]
+  const filled = fillEmptyCompareCells(costTable(), clusters, ['Spring AI', 'LangChain4j'])
+  const ai = costCellOf(filled.split('\n').find((line) => line.startsWith('| Spring AI |')))
+  const lc = costCellOf(filled.split('\n').find((line) => line.startsWith('| LangChain4j |')))
+  assert.match(ai, /按量计费/)
+  assert.equal(lc, COST_MISSING_CELL)
+  assert.ok(!filled.includes(COST_OVERVIEW_NOTE), 'a half-filled cost column must not get the note')
+})
+
+test('pricing questions keep true price columns without a cost placeholder (1.0.2)', () => {
+  const table = fillTable([
+    '| Spring AI | 未核实 | 未核实 |',
+    '| LangChain4j | 未核实 | 未核实 |',
+  ], '| 方案 | 输入价 | 输出价 |')
+  const clusters = [{
+    claim: 'Spring AI 输入价 $0.15/百万 tokens，输出价 $0.60/百万 tokens',
+    evidence: [{ id: 'S8', claim: 'Spring AI 输入价 $0.15/百万 tokens，输出价 $0.60/百万 tokens', url: 'https://example.com/spring-ai-pricing' }],
+  }, {
+    claim: 'LangChain4j 输入价 $0.10/百万 tokens',
+    evidence: [{ id: 'S9', claim: 'LangChain4j 输入价 $0.10/百万 tokens', url: 'https://example.com/langchain4j-pricing' }],
+  }]
+  const filled = fillEmptyCompareCells(table, clusters, ['Spring AI', 'LangChain4j'])
+  assert.ok(filled.includes('| 方案 | 输入价 | 输出价 |'), 'a true price header must stay')
+  assert.match(filled, /输入价 \$0\.15\/百万 tokens[^|]*\[S8\]/)
+  assert.match(filled, /输出价 \$0\.60\/百万 tokens[^|]*\[S8\]/)
+  assert.ok(!filled.includes(COST_MISSING_CELL), 'a price column is not a cost column')
+  assert.ok(!filled.includes(COST_OVERVIEW_NOTE), 'a price column must not get the cost note')
+
+  // Same guarantee end to end for a pricing question: 价格 stays filled, no cost note.
+  const priced = buildResult({
+    brief: ['## 方案对比', '| 方案 | 价格 | 币种/口径 | 适用场景 |', '| --- | --- | --- | --- |', '| DeepSeek | 未核实 | 人民币 | 通用 |', '', '## 置信度', 'low'].join('\n'),
+    sources: [{ id: 'S1', url: 'https://example.com/deepseek-pricing', title: 'DeepSeek pricing' }],
+    confidence: 'low', gaps: [], partial: false, depth: 'quick',
+    clusters: [{ claim: 'DeepSeek 输入价 0.2 元/百万 tokens', evidence: [{ id: 'S1', claim: 'DeepSeek 输入价 0.2 元/百万 tokens', url: 'https://example.com/deepseek-pricing' }] }],
+    compareOptions: ['DeepSeek'],
+    stats: { questionKind: 'pricing', queries: 1, pagesFetched: 1, llmRounds: 1, elapsedMs: 5 },
+  })
+  assert.match(priced.brief, /0\.2 元\/百万 tokens/)
+  assert.ok(!priced.brief.includes(COST_MISSING_CELL), 'pricing flow leaked the cost placeholder')
+  assert.ok(!priced.brief.includes(COST_OVERVIEW_NOTE), 'pricing flow leaked the cost note')
 })
 
 test('a zero-evidence note matches the compare table it describes (1.0.1)', () => {
