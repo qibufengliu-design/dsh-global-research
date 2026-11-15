@@ -225,3 +225,55 @@ test('ensureSections fills confidence and gaps when the model omits them', () =>
   assert.match(kept, /## 置信度\nhigh/)
   assert.match(kept, /## 未解决\n- 无/)
 })
+
+test('references flag pages older than two years with 旧', () => {
+  const brief = appendReferences('## 结论\nx', [
+    { id: 'S1', title: 'old note', url: 'https://a.com/old', domain: 'a.com', publishedAt: '2019-05-01' },
+    { id: 'S2', title: 'fresh note', url: 'https://b.com/new', domain: 'b.com', publishedAt: '2026-01-01' },
+    { id: 'S3', title: 'undated note', url: 'https://c.com/x', domain: 'c.com' },
+  ])
+  assert.match(brief, /\[S1\][^\n]*（网页 · a\.com · 2019-05-01） · 旧$/m)
+  assert.doesNotMatch(brief, /\[S2\][^\n]* · 旧$/m)
+  assert.doesNotMatch(brief, /\[S3\][^\n]* · 旧$/m)
+})
+
+function disputedCluster(claim, urls) {
+  const evidence = urls.map((url, index) => ({
+    claim, quote: `quote ${index}`, url, title: `title ${index}`,
+    domain: new URL(url).hostname, stance: index === 0 ? 'support' : 'refute',
+  }))
+  return { status: 'disputed', claim, evidence }
+}
+
+test('a disputed cluster becomes a 存在冲突 section above 置信度', () => {
+  const clusters = [disputedCluster('Node 22 的维护期到 2027 年', ['https://nodejs.org/x', 'https://blog.example.com/y'])]
+  assignSourceIds(clusters)
+  const brief = ensureSections('## 结论\n两种说法并存 [S1][S2]\n\n## 置信度\nmedium\n\n## 未解决\n- 官方日期未核实', 'medium', [], clusters)
+  assert.match(brief, /^## 存在冲突$/m)
+  assert.ok(brief.indexOf('## 存在冲突') < brief.indexOf('## 置信度'))
+  assert.match(brief, /（支持）— \[S1\] nodejs\.org/)
+  assert.match(brief, /（反驳）— \[S2\] blog\.example\.com/)
+  // Already present: never duplicated (the pipeline inserts it before citation checking).
+  const twice = ensureSections(brief, 'medium', [], clusters)
+  assert.equal(twice.match(/## 存在冲突/g).length, 1)
+})
+
+test('buildResult exposes the conflict lines next to the brief', () => {
+  const clusters = [disputedCluster('Node 22 的维护期到 2027 年', ['https://nodejs.org/x', 'https://blog.example.com/y'])]
+  const sources = assignSourceIds(clusters)
+  const result = buildResult({
+    brief: '## 结论\nx [S1][S2]', sources, confidence: 'medium', gaps: [], partial: false, depth: 'quick',
+    conflicts: clusters,
+  })
+  assert.equal(result.conflicts.length, 2)
+  assert.match(result.conflicts[0], /\[S1\] nodejs\.org/)
+  assert.match(result.brief, /## 存在冲突/m)
+})
+
+test('ensureSections adds a fallback 下一步建议 when the model omitted it', () => {
+  const brief = ensureSections('## 结论\nx\n\n## 置信度\nmedium', 'medium', [])
+  assert.match(brief, /^## 下一步建议\n- 按「未解决」逐条补一轮定向检索，或把关键页面 URL 直接贴进问题重查$/m)
+  const kept = ensureSections('## 下一步建议\n- 跑 npm view node version', 'medium', [])
+  assert.equal(kept.match(/## 下一步建议/g).length, 1)
+  assert.match(kept, /跑 npm view node version/)
+})

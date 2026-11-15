@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { runResearch, groupEvidence, looksLikeFollowUp } from '../lib/pipeline.js'
+import { rankHits } from '../lib/util.js'
 
 const selection = { provider: 'test', model: 'test-model' }
 
@@ -667,4 +668,36 @@ test('groupEvidence counts separate GitHub repos as independent sites', () => {
     { claim: 'Node 22 EOL is 2027-04-30', quote: 'y', url: 'https://github.com/nodejs/nodejs.org/blob/main/blog/v22.md', domain: 'github.com', stance: 'support' },
   ])
   assert.equal(clusters[0].status, 'confirmed')
+})
+
+test('a stale page ranks below a fresh one when the rest of the score is equal', () => {
+  const hits = [
+    { url: 'https://a.com/official-release-notes', title: 'Node LTS release notes', snippet: 'LTS', engine: 'fake', rank: 1, publishedAt: '2019-01-01' },
+    { url: 'https://b.com/official-release-notes', title: 'Node LTS release notes', snippet: 'LTS', engine: 'fake', rank: 1, publishedAt: '2025-06-01' },
+  ]
+  const ranked = rankHits(hits, { question: 'Node LTS release notes', focus: [], now: Date.parse('2026-01-01T00:00:00Z') })
+  assert.deepEqual(ranked.map((hit) => hit.url), ['https://b.com/official-release-notes', 'https://a.com/official-release-notes'])
+})
+
+test('disputed evidence becomes an explicit 存在冲突 section before 置信度', async () => {
+  const responder = (options) => {
+    const prompt = options.user ?? ''
+    if (prompt.includes('<untrusted>')) {
+      return JSON.stringify([
+        { claim: 'Node 22 的维护期到 2027 年', quote: 'Node 22 is the active LTS line', source: 0, type: 'docs', stance: 'support' },
+        { claim: 'Node 22 的维护期到 2027 年', quote: 'Node 22 entered LTS in October 2025', source: 1, type: 'docs', stance: 'refute' },
+      ])
+    }
+    return defaultResponder(options)
+  }
+  const result = await runResearch({
+    question: 'Node 22 支持到什么时候', depth: 'quick', config: baseConfig(),
+    llm: fakeLlm(responder), selection, logger: () => {},
+  })
+  assert.match(result.brief, /^## 存在冲突$/m)
+  assert.ok(result.conflicts.length >= 2, 'both sides are kept on the result')
+  assert.ok(result.brief.indexOf('## 存在冲突') < result.brief.indexOf('## 置信度'))
+  assert.match(result.brief, /\[S\d\][^\n]*nodejs\.org/)
+  assert.match(result.brief, /（支持）/)
+  assert.match(result.brief, /（反驳）/)
 })

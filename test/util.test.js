@@ -2,9 +2,17 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   Budget, BudgetExceeded, configureDomainTrust, decodeEntities, dedupeHits, domainTrust,
-  htmlToText, isBlockedDomain, jaccard, jsonSafe, normalizeUrl, parseLooseJson, rankHits,
-  truncate, canonicalKey, extractUrls,
+  evidenceAgeDays, htmlToText, isBlockedDomain, jaccard, jsonSafe, normalizeUrl, parseLooseJson,
+  rankHits, truncate, canonicalKey, extractUrls,
 } from '../lib/util.js'
+
+test('evidenceAgeDays counts days for a parseable date, null otherwise', () => {
+  const now = Date.parse('2026-01-31T00:00:00Z')
+  assert.equal(evidenceAgeDays('2026-01-01T00:00:00Z', now), 30)
+  assert.equal(evidenceAgeDays('not a date', now), null)
+  assert.equal(evidenceAgeDays('', now), null)
+  assert.equal(evidenceAgeDays(undefined, now), null)
+})
 
 test('extractUrls pulls pasted URLs out of prose and strips trailing punctuation', () => {
   assert.deepEqual(
