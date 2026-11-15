@@ -154,10 +154,13 @@ test('the compare table columns are chosen by the question kind (0.9.9)', () => 
   assert.ok(synthPrompt({ ...args, questionKind: 'learning' }).includes('每个候选必须独立一行'))
 })
 
-// 0.9.10 — 「我们团队 8 个人，微服务该不该拆」 carries no classified signal: the
-// classifier falls back to concept (all scores 0, confidence 0.35), so even after
-// 0.9.9 the table came out generic (选项/适用条件). The wording is a decision, so the
-// table now upgrades to the cost columns while stats.questionKind stays `concept`.
+// 0.9.10 — before decision was a kind, 「我们团队 8 个人，微服务该不该拆」 carried
+// no classified signal: the classifier fell back to concept (all scores 0,
+// confidence 0.35) and the table came out generic (选项/适用条件). The wording is a
+// decision, so the table upgraded to the cost columns while stats.questionKind
+// stayed `concept`. 0.10.0 names the kind, so this test now guards the upgrade
+// path for callers that still pass a generic kind (and anything else the
+// classifier has not learned yet).
 test('an unclassified decision question still gets the cost columns (0.9.10)', () => {
   const args = { ...synthArgs(), mode: 'explain' }
   const decision = '我们团队 8 个人，微服务该不该拆'
@@ -189,4 +192,41 @@ test('an unclassified decision question still gets the cost columns (0.9.10)', (
   )
   // evaluate is a judgement question, so it is cost.
   assert.equal(compareColumnKind('evaluate'), 'cost')
+})
+
+// 0.10.0 — a real decision kind: the prompt has to force a two-way verdict, a
+// quantified-threshold section and a counter-example, while the compare table
+// stays in the cost bucket (a judgement has no price axis).
+test('a decision prompt asks for a verdict, 判据 thresholds and a counter-example (0.10.0)', () => {
+  const question = '我们团队 8 个人，微服务该不该拆'
+  const args = { ...synthArgs(), question, mode: 'explain', questionKind: 'decision' }
+  const prompt = synthPrompt(args)
+  assert.ok(prompt.includes('输出结构（决策型）'), 'the decision mode line is missing')
+  assert.ok(prompt.includes('「## 结论」第一行必须二选一'), 'the 该/不该 verdict rule is missing')
+  assert.ok(prompt.includes('不许用"取决于"代替判断'), 'the no-取决于 escape hatch is missing')
+  assert.ok(prompt.includes('## 判据'), 'the 判据 section is missing from the structure')
+  assert.ok(prompt.includes('可量化的判据阈值'), 'the quantified-threshold rule is missing')
+  assert.ok(prompt.includes('反例'), 'the counter-example rule is missing')
+  assert.ok(prompt.includes('## 行动清单'), 'the action checklist is missing from the structure')
+  assert.ok(prompt.includes('每条都必须可判定'), 'the executable-criterion rule is missing')
+
+  // Columns: decision already sits in the cost bucket, so there is nothing to
+  // upgrade and nothing to override.
+  assert.equal(compareColumnKind('decision'), 'cost')
+  assert.equal(effectiveCompareColumnKind('decision', question), 'cost')
+  assert.ok(prompt.includes('| 方案 | 优势 | 风险 | 适用场景 | 成本概览 |'), 'the decision table left the cost bucket')
+  assert.ok(!prompt.includes('| 输入价 |'), 'a price column leaked into a decision prompt')
+  assert.ok(!prompt.includes('| 选项 |'), 'the generic header leaked into a decision prompt')
+
+  // A compare-phrased decision still has to land on 该/不该: the decision line
+  // outranks the compare mode line instead of being appended next to it.
+  const compared = synthPrompt({ ...args, mode: 'compare' })
+  assert.ok(compared.includes('输出结构（决策型）'), 'compare mode overrode the decision structure')
+  assert.ok(!compared.includes('输出结构（对比型）'), 'both mode lines leaked into one prompt')
+  assert.ok(compared.includes('| 方案 | 优势 | 风险 | 适用场景 | 成本概览 |'))
+
+  // No other kind grows the 判据 section: it is a decision answer-layer contract.
+  for (const kind of ['tech-selection', 'concept', 'pricing', 'learning']) {
+    assert.ok(!synthPrompt({ ...synthArgs(), questionKind: kind }).includes('## 判据'), `${kind} grew a 判据 section`)
+  }
 })

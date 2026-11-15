@@ -7,6 +7,36 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-16
+
+> 0.9.10 把 C 题（`我们团队 8 个人，微服务该不该拆`）的**表列**修对了，**类别**还是错的：`classify()` 对它 8 个类别全 0 分、回落 `concept`（confidence 0.35），cost 列靠 `effectiveCompareColumnKind()` 按措辞升级——那是给「分类器没认出来」的问题垫的一级台阶，不是分类。后果不止表头：提示词没有要求先给判断，检索也没把 query 花在阈值和反例上，出来的简报读起来像概念介绍。本版把这一级台阶补成真类别：`QUESTION_KINDS` 增 `decision`，两档信号词，固定优先级，决策型提示词，必出章节「## 判据」。
+>
+> 一条刻意的边界：`decision` 认的是**二选一判断**（该/不该、要不要、值不值得），不是选型。`该不该用 React` 只有一个候选 → `decision`；`React 还是 Vue 哪个好` 才是 `tech-selection`。两套词表不相交（后者不含 `该不该`/`要不要`），所以不存在「选型题被吸走」的路径；带价的问题仍归 `pricing`（`该不该买 X，多少钱`）。
+
+### Added
+
+- **`decision` 问题类别**：`lib/strategies.js` 的 `QUESTION_KINDS` 增 `'decision'`，`SIGNAL_VERSION` 3 → 4（缓存 key 随信号形状变）。0.9.10 的 C 题现在分类为 `decision`、`scores.decision = 6`、confidence 0.9。
+- **两档信号词**：`lib/strategy.js` 新导出 `DECISION_HINTS`（强档，权重 5：`该不该` / `要不要` / `值不值得` / `是否该` / `应不应该` / `需不需要` / `是否应该` / `值得吗` / `该拆` / `该上` / `该迁` / `要不要拆` / `要不要上` / `该不该用` / `值不值得用`）与 `DECISION_CONTEXT_HINTS`（辅助档，权重 1：`团队` / `多少人` / `规模` / `预算` / `成本` / `风险` / `权衡` / `取舍`）。强档命中即过 2 分接受线；辅助档只加权，单独永远不足以命名类别（`团队规模多大` 不会变成 `decision`）。
+- **`decision` 策略包**：`lib/strategies.js` 新包。`queries.extraTemplates` = `{q} 何时该拆 微服务` / `{q} 团队规模 阈值` / `{q} 反例 失败` / `{q} trade-offs`（沿用既有 `{q}` / `{year}` 语法，定向 query 排计划最前）；`sourcePlan.channels: []` 是显式声明（判断依据来自原则与经验，不硬绑官方文档通道）；`depth.bias` 与 `concept` 同档（0），不额外加深；`mode` 缺省 `explain`。
+- **决策型提示词**：`lib/prompts.js` 的 `synthPrompt({ questionKind: 'decision' })` 增加 `输出结构（决策型）`，且**优先于 `mode`**：①「## 结论」第一行必须二选一写「该」或「不该」（允许「在 X 条件下该、在 Y 条件下不该」，但必须落到一个主判断，不许用「取决于」代替）；②「## 判据」列可量化阈值（团队人数、发布频率、故障定位时长、回滚成本…），一条一行写成「阈值 + 为什么是这条线」，无来源的标「（推断）」；③ 反例：什么情况下判断会反过来；④ 行动清单，每条可直接执行。
+- **`## 判据` 必出章节**：`lib/brief.js` 新导出 `DECISION_CRITERIA_HEADING`（`'## 判据'`）与占位 `- 无`；`requiredSectionsFor({ questionKind: 'decision' })` = `## 行动清单` + `## 判据`；`CHECKLIST_REQUIRED_KINDS` 增 `'decision'`。
+
+### Changed
+
+- **固定优先级**：`KIND_PRIORITY` 插入 `decision`，位置 `… fresh-data → pricing → decision → tech-selection → learning → concept`。`decision` 在 `pricing` 之后（价格题由价目页决定，价格覆盖逻辑不变）；在 `tech-selection` 之前（`该不该用 React` 只有一个选项，是判断不是选型，选型表要求每个候选独立一行，单候选会退化成假对比）。同分时 `rankScores()` 按 `KIND_PRIORITY` 的先后定，不靠表顺序碰运气。
+- **`## 判据` 缺失补 `- 无` 并降一档**：`requiredSectionsFor()` 声明后，`missingSections()` 会先看到它 → pipeline 传 `missingSections: true` 给 `computeConfidence()` 降一档；随后 `ensureSections()` 在「## 置信度」前补 `## 判据` + `- 无`。`## 判据` 不在 `ALWAYS_SECTIONS` 里，所以只有 `decision` 题会追这段。`lib/pipeline.js` 无需改动（既有 `requiredSections` 通路已经跑通）。
+- **表列仍走 cost，不覆盖已分类类别**：`decision` 本来就在 `COST_COMPARE_KINDS` 里，`compareColumnKind('decision') === 'cost'`、`effectiveCompareColumnKind('decision', q) === 'cost'`；措辞升级保留，但降级为「调用方仍传 `concept`、或分类器还没学到的新说法」的兜底，`pricing` 与已分类类别永不被覆盖。
+- `docs/architecture.md` 新增「decision 类别（0.10.0）」一节（信号分档、优先级理由、空 channels、决策型提示词、`## 判据` 的降档与补位），并把 0.9.10 里「真正的 `decision` 类别留到 1.0.0」改成 0.10.0 已落地。
+
+### Tests
+
+- `test/strategy.test.js` 13 → 16（+3）：C 题 → `decision` 且 `scores.decision === 6` / 强档+辅助档信号都在；辅助档单独不足以命名类别；`该不该买 X，多少钱` 仍 `pricing`；`该不该用 React` → `decision`；句级回归 `如何学习 Java` → `learning`、`A 和 B 哪个好` → `tech-selection`、`多少钱` → `pricing`、`React 还是 Vue 哪个好` → `tech-selection`；`decision` 包 `sourcePlan.channels` 为空、`depth.bias` 与 `concept` 相同、四条定向 query 精确展开并排在计划最前。
+- `test/strategy-packs.test.js` 16 → 17（+1）：`decision` 的阈值/反例 query 领跑 `buildQueries` 计划，`concept` 不产生定向 query。
+- `test/prompts.test.js` 11 → 12（+1）：决策型结构、该/不该二选一、`## 判据`、反例、行动清单、可判定判据规则；`mode: 'compare'` 下仍是决策型且不出现「对比型」；cost 表头且无价格列；其他类别不长出 `## 判据`。0.9.10 的「措辞升级」测试保留，注释改成「调用方仍传 generic 类别」的回归。
+- `test/brief.test.js` 58 → 59（+1）：`requiredSectionsFor('decision')` 含 `## 判据` / 占位 `- 无`；缺失时 `missingSections()` 报出、`ensureSections()` 在置信度前补 `## 判据\n- 无` 且不重复；模型写好的判据原样保留；`concept` 仍为 `null`、`learning` 不长判据；缺段的置信度降一档（`high` → `medium`）。
+- Golden：仓库里没有 `test/golden-*` 文件（只有注释里的 golden 说法），本版无 golden diff；C 题、`如何学习 Java`、`A 和 B 哪个好`、`多少钱` 的结果由上面的句级回归测试钉住。
+- `node scripts/test-all.mjs` 19 个文件全绿（本机沙箱内 `node --test` 无法 spawn，逐文件直接执行）。
+
 ## [0.9.10] - 2026-11-16
 
 > 0.9.9 收口时还剩两处没到位。其一，C 题（`我们团队 8 个人，微服务该不该拆`）的表头仍是 `| 选项 | 优势 | 风险 | 适用条件 |`——但它并不是「映射漏了 architecture/decision」（`architecture`/`decision` 在 0.9.9 就已经在 cost 桶里），而是这道题压根没被分类成那些类别：`classify()` 对它的 8 个类别分数全是 0、回落到 `concept`（confidence 0.35，signals `['fallback:no-signal']`），概念题按设计走中性列。其二，A 题（tech-selection）表头已经正确，但「成本概览」三格仍写「未核实（无来源）」：`sanitizeCompareTable()` 确实把 `未核实（无来源）` 清成了 `未核实`，随后 `checkCompareRows()` 按 `/成本/` 把「成本概览」认成价格列，又把标记加了回去——同一层的 `/\d/` 判据另有一处漏：只要格子里出现过数字就保留标记，于是「部署 1 个包（无来源）」这类文字格也留了下来。本版做两件事：**中性类别 + 决策措辞升级到 cost 列**，以及**「（无来源）」只留在纯数量格**。

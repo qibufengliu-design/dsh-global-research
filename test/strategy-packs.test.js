@@ -83,6 +83,29 @@ test('every shipped kind except concept contributes directed queries, and they d
   assert.equal(new Set(seen.values()).size, seen.size)
 })
 
+// 0.10.0 — a decision question is judged from thresholds and counter-examples,
+// not from a vendor's docs: the pack declares no channel and spends its directed
+// queries on the way the judgement flips.
+test('decision leads the plan with threshold and counter-example queries (0.10.0)', () => {
+  const question = '我们团队 8 个人，微服务该不该拆'
+  const decision = resolveStrategy({ questionKind: 'decision', depth: 'standard' })
+  assert.deepEqual(decision.sourcePlan.channels, [])
+  assert.equal(decision.depth.bias, resolveStrategy({ questionKind: 'concept', depth: 'standard' }).depth.bias)
+  const directed = strategyDirectedQueries(decision.queries, question, new Date('2026-11-16'))
+  assert.deepEqual(directed, [
+    `${question} 何时该拆 微服务`,
+    `${question} 团队规模 阈值`,
+    `${question} 反例 失败`,
+    `${question} trade-offs`,
+  ])
+  // The criteria queries lead a capped plan; the raw question is the fallback.
+  const plan = buildQueries([], [], question, 6, decision)
+  assert.deepEqual(plan.slice(0, 4), directed)
+  assert.equal(plan[4], question)
+  // Without sub-questions there is no official-docs variant in front of them.
+  assert.deepEqual(strategyDirectedQueries(resolveStrategy({ questionKind: 'concept', depth: 'standard' }).queries, question), [])
+})
+
 test('queries.limit caps the plan below the caller budget', () => {
   const concept = resolveStrategy({ questionKind: 'concept', depth: 'standard' })
   const capped = { ...concept, queries: { ...concept.queries, limit: 2 } }

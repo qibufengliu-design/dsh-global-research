@@ -127,13 +127,23 @@ research(question, depth, focus, mode, context, researchId, text, saveTo)
 0.9.6 的「比价表完整性」默认每张对比表都有价格轴，于是判断题（C 题「微服务该不该拆」）也拿到一列「价格」，每行都写「未核实」——一个填不出来、却读起来像结论的列。0.9.9 起列由问题类别决定；0.9.10 补上两条漏网：**没被分类出来的判断题**（`classify()` 对 C 题 8 个类别全 0 分、回落 `concept`，`source: 'fallback'`）照样要拿到中性偏成本列，**`（无来源）`** 只许留在纯数量格。
 
 - **三套列**：`lib/prompts.js` 的 `COMPARE_COLUMNS` / `compareColumnKind()` / `compareColumnsFor()` 是唯一来源——`pricing` → `方案 / 输入价 / 输出价 / 币种/口径 / 适用场景`；`tech-selection` / `architecture` / `decision` / `evaluate` → `方案 / 优势 / 风险 / 适用场景 / 成本概览`（0.9.10 起 `evaluate` 也在这里：评估题同样是判断题，没有价格轴）；其余（`learning` / `concept` / 类别未知）→ `选项 / 优势 / 风险 / 适用条件`。`synthPrompt({ questionKind })` 用这套列表写提示词，同时按类别给出缺值写法（pricing 才允许「未核实（无来源）」；成本概览允许「未核实」，但不许编价格、不许另加价格列）与「候选多时保留哪两列」。类别由调用方传入，缺省走中性列。
-- **措辞升级（`effectiveCompareColumnKind(questionKind, question)`）**：先按 `compareColumnKind()` 取桶，只有当桶是中性、且问题带决策措辞（`该不该` / `要不要` / `值不值得` / `是否该` / `应不应该` / `是否值得` / `需不需要` / `该拆`）时才升级到 cost 列。作用是给「分类器没认出来、但用户在二选一」的问题一个不出现价格列的台阶；`pricing` 和已分类的类别永不被覆盖，`stats.questionKind` 也仍是分类器的原值——**这是表列决策，不是重新分类**。它只影响提示词里的表头/缺值/拥挤规则，交付层的清理仍按 `stats.questionKind` 走。真正的 `decision` 类别（要动 `QUESTION_KINDS`、sourcePlan、默认章节、golden）留到 1.0.0。
+- **措辞升级（`effectiveCompareColumnKind(questionKind, question)`）**：先按 `compareColumnKind()` 取桶，只有当桶是中性、且问题带决策措辞（`该不该` / `要不要` / `值不值得` / `是否该` / `应不应该` / `是否值得` / `需不需要` / `该拆`）时才升级到 cost 列。作用是给「分类器没认出来、但用户在二选一」的问题一个不出现价格列的台阶；`pricing` 和已分类的类别永不被覆盖，`stats.questionKind` 也仍是分类器的原值——**这是表列决策，不是重新分类**。它只影响提示词里的表头/缺值/拥挤规则，交付层的清理仍按 `stats.questionKind` 走。真正的 `decision` 类别在 0.10.0 落地（`QUESTION_KINDS`、策略包、`## 判据`、golden 都在这一版里补齐，见下一节）；措辞升级保留，作为「调用方仍传 `concept`、或分类器还没学到的新说法」的兜底。
 - **列不是硬编码的**：「N 个候选就是 N 行、每个候选独立一行、禁止并格」与类别无关，三种表头都保留；「价格」列在非 pricing 题里是错误，而不是缺省。
 - **交付前的清理**：`lib/brief.js` 的 `sanitizeCompareTable(brief, { questionKind })` 在 `buildResult()` 里 `applyZeroEvidenceOptions()` 之后、`checkCompareRows()` 之前跑（类别缺省读 `stats.questionKind`）。它只处理「## 方案对比」的第一张表：数据行标签列剥掉 `（无来源）`/`(无来源)`/`（零证据）`/`（推断）`；其余每一列都先剥 `（无来源）`，**只有剥完剩下纯数字 + 单位时才保留原样**（`0.2 元/百万 tokens`、`8 人`、`99.9%`、`20–40 ms`、`3 天`；数字溯源是 `markUnsourcedNumbers()` 的契约）。文字格即便含数字（`部署 1 个包（无来源）`、`v22.11.0（无来源）`）也剥——0.9.9 的判据是 `/\d/`，只要格子里出现过数字就保留标记，这一类漏了；表头带「价格」（`价格|单价|报价|输入价|输出价|价目|pricing|price`，刻意不匹配裸「价」以免误伤「性价比」「评价」）且类别已知且不是 `pricing` 时，表头改成「成本概览」，把没有 `[S#]` 的纯数字价格格改成 `见注`（带引用的价格是证据、不是噪音，原样保留）——**行不删**，类别未知时保持原样。幂等：跑第二遍不再变化。
 - **清理层与标注层的接缝**：`成本概览` 是允许写「未核实」的中性列，因此 `checkCompareRows()` 的价格列识别改走 `isPriceColumnHeader(cell)`——表头含「成本概览」时**不**当价格列，`价格`/`单价`/`费用`/`成本`（不带「概览」）/`报价` 仍然是。否则 sanitize 刚把 `未核实（无来源）` 清成 `未核实`，这一层又会按 `/成本/` 把标记加回去（0.9.9 交付里的 A 题泄漏就是这样产生的）。pricing 题的裸 `未核实` 仍按 0.9.6 契约标成 `未核实（无来源）`。
 - **`（无来源）` 不再从数字入口漏进标签列**：`markUnsourcedNumbers()` 只标注第 1 列之后的单元格。标签列是候选名，「先拆 2-3 个服务」里的 `2-3` 属于名字，不是待核算的数字；模型自己写进标签列的标记由 `sanitizeCompareTable()` 剥掉。
 - **调试可见性**：`debugStats` 的「调试统计」行带 `· 类型 <questionKind>`（缺省 `concept`），表头不对时先看这一项，不必手工重跑 `classify()`。
 - **识别边界**：`见注` 只替换「纯数字 + 单位」且没有引用的价格格（`0.2 元/百万 tokens`、`¥0.5`、`0.0008 元/千 tokens`）。区间价（`0.2-0.3 元`）、带后缀的口径（`0.2 元/秒`、`0.2 元/次`）、整段说明（`见官网，按量计费`）都不认作纯数字，原样保留；表头若叫「费用」「单价」也会被认成价格列，但「性价比」「评价」不会；表头写「价格」而表体语义上不是价格（例如「价格弹性」）会被误改；转置表（候选做列、维度做行）不处理，因为它的第一列是维度名而不是候选名；只处理「## 方案对比」下的第一张表。措辞升级同理是启发式：`该不该` 出现在与选型无关的句子里（「该不该给实习生开权限」）也会拿到 cost 列——那是可接受的偏差，宁可多一列「成本概览」，也不要给判断题塞价格列。
+
+## decision 类别（0.10.0）
+
+0.9.10 的 C 题（「我们团队 8 个人，微服务该不该拆」）是全 0 分回落 `concept`，靠措辞升级拿到 cost 列——表列对了，问题类别还是错的：提示词没要求给判断，检索也没往阈值/反例上找。0.10.0 把「该不该 / 要不要 / 值不值得」做成真类别。
+
+- **信号分两档**（`lib/strategy.js`，`SIGNAL_VERSION` 4）：强档 `DECISION_HINTS`（`该不该` / `要不要` / `值不值得` / `是否该` / `应不应该` / `需不需要` / `是否应该` / `值得吗` / `该拆` / `该上` / `该迁` / `要不要拆` / `要不要上` / `该不该用` / `值不值得用`）权重 5，命中即过 2 分接受线；辅助档 `DECISION_CONTEXT_HINTS`（`团队` / `多少人` / `规模` / `预算` / `成本` / `风险` / `权衡` / `取舍`）权重 1，只做加权、单独永远不足以命名类别（`团队规模多大` 仍是别的类别）。
+- **固定优先级**（`KIND_PRIORITY`）：`legal → troubleshoot → contested → fresh-data → pricing → decision → tech-selection → learning → concept`。`decision` 排在 `pricing` 之后：带价的问题由价目页决定，`该不该买 X，多少钱` 仍是 `pricing`（价格覆盖逻辑不变）。排在 `tech-selection` 之前：`该不该用 React` 只有一个选项，是二选一判断而不是选型（选型表要求每个候选独立一行，单候选会退化成一行表的假对比）；**只有真正并列比较（`A 还是 B 哪个好`）才是 `tech-selection`**，这类问法里没有 `该不该`/`要不要`，两套词表不相交。同分时按 `KIND_PRIORITY` 的先后决定（`rankScores()`）。
+- **策略包**（`lib/strategies.js`）：`queries.extraTemplates` = `{q} 何时该拆 微服务` / `{q} 团队规模 阈值` / `{q} 反例 失败` / `{q} trade-offs`（沿用 `{q}` / `{year}` 语法，定向 query 排在计划最前）；`sourcePlan.channels: []` 是显式声明——判断依据来自原则与经验，不硬绑官方文档通道，也避免把决策题拖进文档爬取；`depth.bias` 与 `concept` 同档（0），不额外加深；`mode` 缺省 `explain`。
+- **提示词**（`lib/prompts.js`）：`synthPrompt({ questionKind: 'decision' })` 换成「决策型」输出结构，且优先于 `mode`（对比模式也不能把它变回对比结构）：① 「## 结论」第一行必须二选一写「该」或「不该」，允许「在 X 条件下该、在 Y 条件下不该」但必须落到一个主判断，不许用「取决于」代替判断；② 「## 判据」列可量化阈值（团队人数、发布频率、故障定位时长、回滚成本…），一条一行写成「阈值 + 为什么是这条线」，没来源的标「（推断）」；③ 反例：什么情况下判断会反过来；④ 行动清单，每条可直接执行。对比表列仍走 cost 桶。
+- **必出章节**（`lib/brief.js`）：`requiredSectionsFor({ questionKind: 'decision' })` = `## 行动清单` + `## 判据`（`DECISION_CRITERIA_HEADING`，缺省占位 `- 无`）。声明在答案层而不是策略包里，避免同一段落有两个 owner；模型漏写时 `missingSections()` 先看到它，pipeline 传 `missingSections: true` 给 `computeConfidence()` → 降一档，`ensureSections()` 再在「## 置信度」前补 `## 判据` + `- 无`。`## 判据` 不在 `ALWAYS_SECTIONS` 里，所以只有 decision 题会追它。
 
 ## 冲突三分
 
@@ -161,7 +171,7 @@ research(question, depth, focus, mode, context, researchId, text, saveTo)
 ```
 
 - 「识别 / 去重后 / 可读 / 采用」四个数字全部来自本轮真实计数，不做估算；续跑时只记本轮新抓，行尾补 `（续跑：复用 N 页）`。
-- 必出章节按 `questionKind` / `mode` 声明，缺段降一档置信度；`ensureSections()` 补占位，`requiredSectionsFor()` 合并策略包声明。
+- 必出章节按 `questionKind` / `mode` 声明，缺段降一档置信度；`ensureSections()` 补占位，`requiredSectionsFor()` 合并策略包声明。`decision` 题额外欠一段「## 判据」（可量化阈值清单，缺省 `- 无`），「decision 类别（0.10.0）」一节里的「决策型」提示词就是为它写的。
 - 行动清单固定在「方案对比 / 步骤」之后、「坑与风险」之前；compare 类至少 1 条写「怎么小范围验证或试点」。
 - 定量对比表的数字列每行带 `[S#]`，缺失时 `markUnsourcedNumbers()` 追加「（无来源）」而不是删数字（幂等）。
 - 对比题的选项名先剥离冒号引导语再切分（`compareOptions()`），零证据的表行/缺口只给核心名 ≥2 字且命中 0 次的选项（`countOptionHits()` 按核心 token 匹配，拉丁词边界且允许版本后缀、中文 ≥2 字子串）；清洗失败的片段直接丢弃，不产生假 gap（0.9.1）。

@@ -5,7 +5,7 @@ import {
   resolveStrategy,
 } from '../lib/strategy.js'
 import { PRICING_SEEDS, QUESTION_KINDS, STRATEGY_DEFAULTS } from '../lib/strategies.js'
-import { DEPTH_PROFILES, buildQueries, resolveDepth, runResearch } from '../lib/pipeline.js'
+import { DEPTH_PROFILES, buildQueries, resolveDepth, runResearch, strategyDirectedQueries } from '../lib/pipeline.js'
 
 /*
  * Frozen copies of the six predicates this module replaces. They are the
@@ -43,6 +43,7 @@ test('classify recognises every shipped question kind', () => {
     ['CRA 合规要求有哪些？', 'legal'],
     ['升级到 Node 22 后 build 报错怎么修', 'troubleshoot'],
     ['零基础怎么学 Rust？', 'learning'],
+    ['我们团队 8 个人，微服务该不该拆', 'decision'],
     ['TypeScript 是什么？', 'concept'],
   ]
   for (const [question, expected] of cases) {
@@ -432,4 +433,74 @@ test('only pricing questions get official price-list seeds', () => {
   // Version/release questions keep the existing official-domain rule: no seeds.
   const release = resolveStrategy({ questionKind: 'fresh-data', question: 'Node 22 什么时候发布' })
   assert.deepEqual(release.sources.officialSeeds, [])
+})
+
+/* ------------------------------------------------------------------ *
+ * 0.10.0 — decision: 该不该 / 要不要 / 值不值得. Before it, the C 题
+ * 「我们团队 8 个人，微服务该不该拆」 scored 0 on every kind and fell back
+ * to concept (confidence 0.35); the cost columns came from a wording patch.
+ * ------------------------------------------------------------------ */
+
+test('0.10.0 — judgement wording names the decision kind, with a two-tier signal', () => {
+  const c = classify({ question: '我们团队 8 个人，微服务该不该拆' })
+  assert.equal(c.questionKind, 'decision')
+  assert.equal(c.source, 'regex')
+  // 该不该 (5) + 团队 (1): the auxiliary tier reinforced, it did not decide.
+  assert.deepEqual(c.scores.decision, 6)
+  assert.ok(c.confidence >= 0.7, `confidence ${c.confidence}`)
+  assert.ok(c.signals.includes('kw:decision'))
+  assert.ok(c.signals.includes('kw:decision-context'))
+
+  // The auxiliary tier alone is below the acceptance threshold: a question that
+  // merely mentions 团队/规模 must not become a decision question.
+  const auxOnly = classify({ question: '团队规模多大' })
+  assert.notEqual(auxOnly.questionKind, 'decision')
+  assert.equal(auxOnly.scores.decision, 1)
+
+  // Priority: pricing still outranks decision (a price question is decided by a
+  // price page, not by thresholds); decision outranks tech-selection.
+  assert.equal(classify({ question: '该不该买 DeepSeek API，多少钱' }).questionKind, 'pricing')
+  assert.equal(classify({ question: '要不要上 Kubernetes' }).questionKind, 'decision')
+})
+
+test('0.10.0 — sentence-level regression: decision does not steal the other classes', () => {
+  // The three questions the 0.9.10 report pinned as regressions must not move.
+  assert.equal(classify({ question: '如何学习 Java' }).questionKind, 'learning')
+  assert.equal(classify({ question: 'A 和 B 哪个好' }).questionKind, 'tech-selection')
+  assert.equal(classify({ question: '多少钱' }).questionKind, 'pricing')
+
+  // 该不该用 React names ONE option: it asks for a verdict, so it is a decision,
+  // not a selection (the tech-selection pack would build a one-row table and ask
+  // "在 X 条件下选 A，在 Y 条件下选 B" for a single candidate).
+  assert.equal(classify({ question: '该不该用 React' }).questionKind, 'decision')
+  // A real head-to-head carries no 该不该/要不要 wording, so it stays a selection.
+  assert.equal(classify({ question: 'React 还是 Vue 哪个好' }).questionKind, 'tech-selection')
+})
+
+test('0.10.0 — the decision pack adds criteria queries and no source channel', () => {
+  const question = '我们团队 8 个人，微服务该不该拆'
+  const strategy = resolveStrategy({ questionKind: 'decision', question })
+  assert.equal(strategy.reason, 'kind:decision')
+  assert.equal(strategy.mode, 'explain')
+  // Same depth as concept: a decision answer gains from thresholds, not pages.
+  assert.equal(strategy.depth.bias, resolveStrategy({ questionKind: 'concept' }).depth.bias)
+  // No official-docs channel: the evidence is principles and counter-examples.
+  assert.deepEqual(strategy.sourcePlan.channels, [])
+  assert.deepEqual(strategy.queries.extraTemplates, [
+    '{q} 何时该拆 微服务',
+    '{q} 团队规模 阈值',
+    '{q} 反例 失败',
+    '{q} trade-offs',
+  ])
+  const directed = strategyDirectedQueries(strategy.queries, question, new Date('2026-11-16'))
+  assert.deepEqual(directed, [
+    `${question} 何时该拆 微服务`,
+    `${question} 团队规模 阈值`,
+    `${question} 反例 失败`,
+    `${question} trade-offs`,
+  ])
+  // The thresholds lead a capped plan; the raw question is only the fallback.
+  const plan = buildQueries([], [], question, 6, strategy)
+  assert.deepEqual(plan.slice(0, 4), directed)
+  assert.equal(plan[4], question)
 })

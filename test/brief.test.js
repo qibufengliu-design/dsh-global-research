@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ACTION_CHECKLIST_HEADING, appendConflictSection, appendReferences, appendRetrievalFlow, appendStats, applyZeroEvidenceOptions, assignSourceIds, buildResult,
-  checkCompareRows, computeConfidence, COST_OVERVIEW_HEADER, ensureSections, fallbackBrief, formatRetrievalFlow, gradeSource, isPriceColumnHeader, markUnsourcedNumbers, missingSections, PRICE_SEE_NOTE, requiredSectionsFor,
+  checkCompareRows, computeConfidence, COST_OVERVIEW_HEADER, DECISION_CRITERIA_HEADING, ensureSections, fallbackBrief, formatRetrievalFlow, gradeSource, isPriceColumnHeader, markUnsourcedNumbers, missingSections, PRICE_SEE_NOTE, requiredSectionsFor,
   sanitizeCompareTable, UNSOURCED_NUMBER_MARK, validateCitations, zeroEvidenceGapText,
 } from '../lib/brief.js'
 import { findSelfContradictions } from '../lib/assertions.js'
@@ -745,6 +745,43 @@ test('the action checklist is required for compare/tech-selection/learning only 
     [ACTION_CHECKLIST_HEADING],
   )
   assert.deepEqual(missingSections('## 结论\nx', requiredSectionsFor({ mode: 'explain', questionKind: 'concept' })), [])
+})
+
+test('a decision brief owes a 判据 section, filled with 无 and costing one notch (0.10.0)', () => {
+  const sections = requiredSectionsFor({ mode: 'explain', questionKind: 'decision' })
+  assert.deepEqual(sections.map((entry) => entry.heading), [ACTION_CHECKLIST_HEADING, DECISION_CRITERIA_HEADING])
+  assert.equal(DECISION_CRITERIA_HEADING, '## 判据')
+  assert.equal(sections[1].fallback, '- 无')
+  // The section is required, so a model that skipped it is visible to the
+  // pipeline *before* the placeholder is filled — that is the confidence notch.
+  assert.deepEqual(
+    missingSections('## 结论\n不该拆 [S1]\n\n## 行动清单\n- 先试点两周', sections).map((entry) => entry.heading),
+    [DECISION_CRITERIA_HEADING],
+  )
+  const filled = ensureSections(
+    '## 结论\n不该拆 [S1]\n\n## 行动清单\n- 先试点两周\n\n## 置信度\nhigh',
+    'high', [], [], sections,
+  )
+  assert.match(filled, /^## 判据\n- 无$/m)
+  assert.ok(filled.indexOf(DECISION_CRITERIA_HEADING) < filled.indexOf('## 置信度'))
+  assert.deepEqual(missingSections(filled, sections), [])
+  // A criteria list the model wrote is kept verbatim and never duplicated.
+  const written = ensureSections(
+    '## 结论\n不该拆 [S1]\n\n## 判据\n- 团队 ≥ 8 人且日发布 ≥ 3 次时拆分才划算\n\n## 置信度\nhigh',
+    'high', [], [], sections,
+  )
+  assert.equal((written.match(/^## 判据$/gm) ?? []).length, 1)
+  assert.match(written, /团队 ≥ 8 人/)
+  // Only decision declares it: the legacy kinds keep the exact 0.9.0 list.
+  assert.equal(requiredSectionsFor({ mode: 'explain', questionKind: 'concept' }), null)
+  assert.ok(!(requiredSectionsFor({ mode: 'explain', questionKind: 'learning' }) ?? [])
+    .some((entry) => entry.heading === DECISION_CRITERIA_HEADING))
+
+  // A missing declared section costs one confidence notch (the pipeline passes
+  // missingSections: true exactly like this when missingSections() is non-empty).
+  const primary = [0, 1, 2].map((index) => cluster(`claim ${index}`, ['https://eur-lex.europa.eu/x', 'https://arxiv.org/abs/1']))
+  assert.equal(computeConfidence(primary), 'high')
+  assert.equal(computeConfidence(primary, { missingSections: true }), 'medium')
 })
 
 test('uncited numbers in the compare table are marked, cited ones are left alone (0.9.0)', () => {
