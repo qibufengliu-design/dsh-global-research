@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-global-research",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Orchestrated global research for DeepSeek Harness: decompose, multi-source search, read, cross-verify, synthesize a cited brief.",
   "type": "module",
   "main": "./index.js",
