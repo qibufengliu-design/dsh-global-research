@@ -1,8 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  appendConflictSection, appendReferences, appendRetrievalFlow, appendStats, applyZeroEvidenceOptions, assignSourceIds, buildResult,
-  computeConfidence, ensureSections, fallbackBrief, formatRetrievalFlow, gradeSource, validateCitations, zeroEvidenceGapText,
+  ACTION_CHECKLIST_HEADING, appendConflictSection, appendReferences, appendRetrievalFlow, appendStats, applyZeroEvidenceOptions, assignSourceIds, buildResult,
+  computeConfidence, ensureSections, fallbackBrief, formatRetrievalFlow, gradeSource, markUnsourcedNumbers, missingSections, requiredSectionsFor,
+  UNSOURCED_NUMBER_MARK, validateCitations, zeroEvidenceGapText,
 } from '../lib/brief.js'
 import { findSelfContradictions } from '../lib/assertions.js'
 import { autoDepth, buildQueries, groupEvidence, resolveDepth, shortFragments } from '../lib/pipeline.js'
@@ -661,4 +662,98 @@ test('a zero-evidence option is marked 无证据 in the comparison table (0.7.1)
   // No table at all: a bullet carries the fact, no table is invented.
   assert.match(applyZeroEvidenceOptions('## 方案对比\n不适用\n\n## 置信度\nlow', ['bun']), /- 「bun」：无证据/)
   assert.match(zeroEvidenceGapText('bun'), /^选项「bun」在本轮证据中没有可用来源（零证据），未纳入对比$/)
+})
+
+test('a brief without an action checklist gets the 无 placeholder (0.9.0)', () => {
+  const filled = ensureSections('## 结论\n选 Node 22 [S1]\n\n## 依据\n- 官方发布说明 [S1]', 'high', [])
+  assert.match(filled, new RegExp(`^${ACTION_CHECKLIST_HEADING}\\n- 无$`, 'm'))
+  // Position: after the verdict/options, before the verdict's confidence block.
+  assert.ok(filled.indexOf(ACTION_CHECKLIST_HEADING) > filled.indexOf('## 结论'))
+  assert.ok(filled.indexOf(ACTION_CHECKLIST_HEADING) < filled.indexOf('## 置信度'))
+
+  // After 方案对比 and before 坑与风险 when the model wrote both.
+  const positioned = ensureSections(
+    '## 结论\n选 pnpm [S1]\n\n## 方案对比\n| 方案 | 优势 |\n| --- | --- |\n| pnpm | 快 [S1] |\n\n## 坑与风险\n未发现',
+    'medium',
+    [],
+  )
+  assert.ok(positioned.indexOf('## 方案对比') < positioned.indexOf(ACTION_CHECKLIST_HEADING))
+  assert.ok(positioned.indexOf(ACTION_CHECKLIST_HEADING) < positioned.indexOf('## 坑与风险'))
+
+  // A checklist the model wrote is kept verbatim and never duplicated.
+  const written = ensureSections(
+    '## 结论\n选 pnpm [S1]\n\n## 行动清单\n- 在一个单仓项目里跑 pnpm 试点两周\n\n## 置信度\nmedium',
+    'medium',
+    [],
+  )
+  assert.equal((written.match(/^## 行动清单$/gm) ?? []).length, 1)
+  assert.match(written, /- 在一个单仓项目里跑 pnpm 试点两周/)
+})
+
+test('the action checklist is required for compare/tech-selection/learning only (0.9.0)', () => {
+  const headings = (options) => (requiredSectionsFor(options) ?? []).map((entry) => entry.heading)
+  assert.ok(headings({ mode: 'compare' }).includes(ACTION_CHECKLIST_HEADING))
+  assert.ok(headings({ mode: 'explain', questionKind: 'tech-selection' }).includes(ACTION_CHECKLIST_HEADING))
+  assert.ok(headings({ mode: 'explain', questionKind: 'learning' }).includes(ACTION_CHECKLIST_HEADING))
+  // Optional for concept/track: still filled by ensureSections, but no notch.
+  assert.ok(!headings({ mode: 'explain', questionKind: 'concept' }).includes(ACTION_CHECKLIST_HEADING))
+  assert.ok(!headings({ mode: 'track', questionKind: 'fresh-data' }).includes(ACTION_CHECKLIST_HEADING))
+  assert.equal(requiredSectionsFor({ mode: 'explain', questionKind: 'concept' }), null)
+
+  // A pack's own declaration survives the merge, placeholder included.
+  const merged = requiredSectionsFor({ mode: 'compare', base: [{ heading: '## 迁移成本' }] })
+  assert.deepEqual(merged.map((entry) => entry.heading), ['## 迁移成本', ACTION_CHECKLIST_HEADING])
+  assert.equal(merged[0].fallback, '- 不适用')
+
+  assert.deepEqual(
+    missingSections('## 结论\nx', requiredSectionsFor({ mode: 'compare' })).map((entry) => entry.heading),
+    [ACTION_CHECKLIST_HEADING],
+  )
+  assert.deepEqual(missingSections('## 结论\nx', requiredSectionsFor({ mode: 'explain', questionKind: 'concept' })), [])
+})
+
+test('uncited numbers in the compare table are marked, cited ones are left alone (0.9.0)', () => {
+  const brief = [
+    '## 结论', '选 A [S1]。', '',
+    '## 方案对比',
+    '| 方案 | 价格 | 延迟 |',
+    '| --- | --- | --- |',
+    '| A | 0.2 元 | 120 ms |',
+    '| B | 0.2 元 [S1] | 90 ms [S2] |',
+    '',
+    '## 置信度', 'medium',
+  ].join('\n')
+
+  const marked = markUnsourcedNumbers(brief)
+  assert.match(marked, /^\| A \| 0\.2 元（无来源） \| 120 ms（无来源） \|$/m)
+  assert.match(marked, /^\| B \| 0\.2 元 \[S1\] \| 90 ms \[S2\] \|$/m)
+  assert.ok(!marked.includes(`[S1]${UNSOURCED_NUMBER_MARK}`), 'a cited number must not be marked')
+  // Numbers stay; only the label is added.
+  assert.ok(marked.includes('0.2 元'), 'the value itself must survive')
+  // Idempotent: running it again changes nothing.
+  assert.equal(markUnsourcedNumbers(marked), marked)
+  // The header row (`价格`, `延迟`) is never marked.
+  assert.match(marked, /^\| 方案 \| 价格 \| 延迟 \|$/m)
+
+  // Spliced into buildResult(), the same fallback runs on the delivered brief.
+  const result = buildResult({
+    brief: '## 结论\nx [S1]', sources: [], confidence: 'medium', gaps: [], partial: false, depth: 'quick',
+    stats: { queries: 1, pagesFetched: 1, llmRounds: 1, elapsedMs: 5 },
+  })
+  assert.doesNotMatch(result.brief, /（无来源）/, 'nothing to mark when the table only cites sources')
+
+  const withTable = buildResult({
+    brief: [
+      '## 结论', '选 A [S1]。', '',
+      '## 方案对比',
+      '| 方案 | 价格 |',
+      '| --- | --- |',
+      '| A | 0.2 元 |',
+      '| B | 0.3 元 [S1] |',
+    ].join('\n'),
+    sources: [], confidence: 'medium', gaps: [], partial: false, depth: 'quick',
+    stats: { queries: 1, pagesFetched: 1, llmRounds: 1, elapsedMs: 5 },
+  })
+  assert.match(withTable.brief, /^\| A \| 0\.2 元（无来源） \|$/m)
+  assert.match(withTable.brief, /^\| B \| 0\.3 元 \[S1\] \|$/m)
 })

@@ -76,3 +76,32 @@ test('plan prompt tags every query with one of the three kinds (0.7.1)', () => {
   // teach the model the old shape.
   assert.ok(prompt.includes('{"queries":[{"q":"...","kind":"semantic"}]'), 'the JSON example does not show the kind field')
 })
+
+test('synthesis prompt opens with a cited one-sentence verdict (0.9.0)', () => {
+  const prompt = synthPrompt(synthArgs())
+  assert.ok(prompt.includes('**一句话：<结论>**'), 'the 一句话 one-liner format is missing')
+  assert.ok(prompt.includes('不超过 80 字'), 'the one-liner length cap is missing')
+  assert.ok(prompt.includes('有推荐对象就点名'), 'the name-the-recommendation rule is missing')
+  assert.ok(prompt.includes('选 X'), 'the recommendation example is missing')
+  // Every verifiable judgement carries a source, every unsourced one says so.
+  assert.ok(prompt.includes('结论段里每个可核查判断的末尾都必须紧跟 [S#]'), 'the conclusion citation rule is missing')
+  assert.ok(prompt.includes('（推断）'), 'the inference marker is missing')
+  assert.ok(prompt.includes('**（证据不足，以下为初步判断）**'), 'the insufficient-evidence prefix is missing')
+})
+
+test('synthesis prompt requires the action checklist with executable items (0.9.0)', () => {
+  const prompt = synthPrompt(synthArgs())
+  assert.ok(prompt.includes('## 行动清单'), 'the action checklist section is missing')
+  assert.ok(prompt.includes('3-5 条'), 'the item count is missing')
+  assert.ok(prompt.includes('动词开头'), 'the verb-first rule is missing')
+  assert.ok(prompt.includes('不超过 60 字'), 'the per-item length cap is missing')
+  assert.ok(prompt.includes('如何小范围验证或试点'), 'the compare-mode pilot rule is missing')
+  // Placement is part of the contract, not left to the model's taste.
+  assert.ok(prompt.includes('之后、「## 坑与风险」之前'), 'the placement rule is missing')
+})
+
+test('synthesis prompt warns that uncited table numbers get a no-source label (0.9.0)', () => {
+  const prompt = synthPrompt(synthArgs())
+  assert.ok(prompt.includes('数字列里每一行的数字后都要带 [S#]'), 'the per-row number rule is missing')
+  assert.ok(prompt.includes('（无来源）'), 'the fallback label is not disclosed to the model')
+})

@@ -39,7 +39,7 @@ function evidenceReply() {
 function synthReply() {
   return [
     '## 结论',
-    'Node 22 是当前 LTS，建议在长期支持项目中使用 [S1][S2]。',
+    '**一句话：选 Node 22 LTS**，它到 2027-04 仍在支持期内 [S1][S2]。',
     '',
     '## 依据',
     '- 官方发布说明确认 [S1]',
@@ -48,6 +48,11 @@ function synthReply() {
     '## 方案对比',
     '不适用',
     '',
+    '## 行动清单',
+    '- 跑 nvm install 22 并在 package.json 锁定 engines',
+    '- 在 CI 加一条 Node 22 冒烟任务',
+    '- 2027-04 前把升级窗口排进迭代',
+    '',
     '## 坑与风险',
     '未发现',
     '',
@@ -55,7 +60,7 @@ function synthReply() {
     'high',
     '',
     '## 未解决',
-    '无',
+    '无。',
   ].join('\n')
 }
 
@@ -1407,6 +1412,9 @@ function compareSynthReply() {
     '| yarn | 省空间 [S2] | 兼容性 | 新项目 |',
     '| bun | 内置运行时 [S3] | 生态早期 | 试点 |',
     '',
+    '## 行动清单',
+    '- 在一个单仓项目里跑 pnpm 试点两周',
+    '',
     '## 坑与风险',
     '未发现',
     '',
@@ -1414,7 +1422,7 @@ function compareSynthReply() {
     'medium',
     '',
     '## 未解决',
-    '无',
+    '无。',
   ].join('\n')
 }
 
@@ -1693,4 +1701,76 @@ test('a price question never queries the Java docs site and does query a vendor 
   )
   // Step 2a (sitemap crawl) is never reached for this kind: no bases were kept.
   assert.deepEqual(rawRequests.filter((url) => /sitemap/i.test(url)), [])
+})
+
+/** Strip the checklist a fixture wrote, to exercise the "model omitted it" path. */
+function withoutActionChecklist(responder) {
+  return (options) => {
+    const text = String(responder(options))
+    if (!text.includes('## 行动清单')) return text
+    return text.replace(/\n## 行动清单\n(?:- .*\n)+\n/, '\n')
+  }
+}
+
+/**
+ * The shared defaultResponder answers the synthesis prompt through its 缺口
+ * branch (the brief prompt mentions 缺口 too, on purpose), which is how the
+ * older tests exercise the deterministic fallback. These answer-layer tests
+ * need a real synthesized brief, so route 研究简报 explicitly first.
+ */
+function synthFirst(reply) {
+  return (options) => ((options.user ?? '').includes('研究简报') ? reply(options) : defaultResponder(options))
+}
+
+test('the answer layer lands in the delivered brief after the retrieval flow (0.9.0)', async () => {
+  const result = await runResearch({
+    question: 'Node 22 是 LTS 吗？项目该用哪个版本',
+    depth: 'standard',
+    config: baseConfig(),
+    llm: fakeLlm(synthFirst(() => synthReply())),
+    selection,
+    logger: () => {},
+  })
+  assert.match(result.brief, /^## 行动清单$/m)
+  assert.match(result.brief, /^- 跑 nvm install 22/m)
+  assert.match(result.brief, /^> 检索流程：/m, 'the run went through the normal pipeline')
+  // Section order the reader expects: options, then the moves, then the risks.
+  assert.ok(result.brief.indexOf('## 方案对比') < result.brief.indexOf('## 行动清单'))
+  assert.ok(result.brief.indexOf('## 行动清单') < result.brief.indexOf('## 坑与风险'))
+})
+
+test('a compare brief that omits the checklist gets 无 and one confidence notch (0.9.0)', async () => {
+  const config = baseConfig()
+  config.__fetchPage = compareFetcher()
+  const run = (responder) => runResearch({
+    question: 'pnpm 还是 yarn 还是 bun，该选哪个？',
+    depth: 'quick',
+    mode: 'compare',
+    config,
+    llm: fakeLlm(responder),
+    selection,
+    logger: () => {},
+  })
+  const withList = await run(compareResponder)
+  const without = await run(withoutActionChecklist(compareResponder))
+  assert.match(without.brief, /^## 行动清单\n- 无$/m)
+  assert.equal(without.confidence, downgradeConfidence(withList.confidence))
+  assert.ok(without.confidence !== withList.confidence, `expected a notch below ${withList.confidence}`)
+})
+
+test('a concept brief keeps the checklist optional: 无 placeholder, no notch (0.9.0)', async () => {
+  const run = (responder) => runResearch({
+    question: '什么是 JavaScript 事件循环',
+    depth: 'standard',
+    config: baseConfig(),
+    llm: fakeLlm(responder),
+    selection,
+    logger: () => {},
+  })
+  const withList = await run(synthFirst(() => synthReply()))
+  const without = await run(withoutActionChecklist(synthFirst(() => synthReply())))
+  assert.equal(without.stats.questionKind, 'concept')
+  assert.match(without.brief, /^## 行动清单\n- 无$/m)
+  // Optional for concept: the placeholder appears, but confidence is unchanged.
+  assert.equal(without.confidence, withList.confidence)
 })

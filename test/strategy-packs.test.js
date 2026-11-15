@@ -95,12 +95,15 @@ test('queries.limit caps the plan below the caller budget', () => {
 
 /* --------------------------------------------------------------- sections */
 
-test('ensureSections without a section list is the legacy four-heading brief', () => {
+test('ensureSections without a section list is the legacy brief plus the 0.9.0 checklist', () => {
   const brief = '## 结论\nNode 22 是 LTS'
   const out = ensureSections(brief, 'medium', [])
   assert.equal(out, [
     '## 结论',
     'Node 22 是 LTS',
+    '',
+    '## 行动清单',
+    '- 无',
     '',
     '## 置信度',
     'medium（工具按已确认来源数计算）',

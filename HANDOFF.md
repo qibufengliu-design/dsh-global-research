@@ -2,7 +2,7 @@
 
 ## 一句话状态
 
-插件可日常使用（P0–P8 + 0.6.x + 0.7.0 + 0.7.1 + 0.8.0 + 0.8.1 + 0.8.2 + 0.8.3 全部完成），**已推送到 GitHub**（`main` 随 0.6.8 推过；0.7.0、0.7.1、0.8.0、0.8.1、0.8.2、0.8.3 尚未推）。0.8.0 起有 `scripts/retrieval-check.mjs`：不跑完整研究、不花 LLM，就能验证「检索与选页」有没有退化；0.8.1–0.8.3 用它抓到并修掉了四处真实回归（compare 选项名带中文谓词、planner 不产出官方定向查询、不传 mode 时选型题落到 concept、价格题被 Java 文档通道劫持）。
+插件可日常使用（P0–P8 + 0.6.x + 0.7.0 + 0.7.1 + 0.8.0 + 0.8.1 + 0.8.2 + 0.8.3 + 0.9.0 全部完成），**已推送到 GitHub**（`main` 随 0.6.8 推过；0.7.0、0.7.1、0.8.0、0.8.1、0.8.2、0.8.3、0.9.0 尚未推）。0.8.0 起有 `scripts/retrieval-check.mjs`：不跑完整研究、不花 LLM，就能验证「检索与选页」有没有退化；0.8.1–0.8.3 用它抓到并修掉了四处真实回归（compare 选项名带中文谓词、planner 不产出官方定向查询、不传 mode 时选型题落到 concept、价格题被 Java 文档通道劫持）。0.9.0 是「答案层」：简报首行一句话结论（带 `[S#]`/`（推断）`）、新增「## 行动清单」、方案对比裸数字兜底标 `（无来源）`。
 
 ## 仓库与版本
 
@@ -25,7 +25,8 @@
   - 0.8.1（本次提交）compare 选项名截断 + planner 官方定向查询兜底（`officialBackstopQueries`）；hash 在此文件改写后生成，未回填
   - 0.8.2（本次提交）不传 mode 时 classify 自认选型/对比题（`COMPARE_HINTS`/`TECH_HINTS`/`hasOptionList` + `classify().mode`）；hash 在此文件改写后生成，未回填
   - 0.8.3（本次提交）价格题 → 新 kind `pricing`（`PRICING_HINTS` 词表 + `PRICE_COMPARE_HINTS` + `PRICE_DECISIVE_KINDS` 优先级），`resolveStrategy` 对价格词问题删掉 `official-docs` 通道；hash 在此文件改写后生成，未回填
-- 测试：18 个文件逐个跑，**320 例全绿**（`node --test test/` 与 `node --test test/<file>` 在沙箱都会 EPERM，只能 `node test/<file>.test.js` 让 node:test 在进程内跑）
+  - 0.9.0（本次提交）答案层：`synthPrompt` 首行 `**一句话：…**` + `[S#]`/`（推断）` 标注 + 新增「## 行动清单」；`lib/brief.js` 的 `ensureActionChecklist`/`requiredSectionsFor`/`markUnsourcedNumbers`（compare 缺清单降档、裸数字标 `（无来源）`）；hash 在此文件改写后生成，未回填
+- 测试：18 个文件逐个跑，**329 例全绿**（`node --test test/` 与 `node --test test/<file>` 在沙箱都会 EPERM，只能 `node test/<file>.test.js` 让 node:test 在进程内跑）
 
 ## 推送
 
@@ -54,6 +55,8 @@ git -c http.sslBackend=openssl push origin main
 12. **不传 mode 也认得出选型/对比题**（0.8.2）：`classify()` 新增对比措辞（`该怎么选|怎么选|哪个好|差异|区别|…`）+ 技术栈提示（`java|spring|node|react|…|数据库|框架|中间件`）与三选项列表（`A、B、C` / `A/B/C`）；两者同时命中 → `tech-selection` 且建议 `compare`，只命中措辞 → 仍归 `tech-selection`（不新增 `comparison` kind）。`runResearch` 没收到 mode 时不再默认 `'explain'`，而是用 `classify().mode`；`index.js` 用有效 mode 算缓存键，`stats` 增加 `mode`。实测同一条 RAG 选题在**不带 `--mode`** 时 `docPage` 5 → 10、官方定向 0 → 2。
 13. **价格题别再被 Java 文档劫持**（0.8.3）：新增第八个 kind `pricing`（`QUESTION_KINDS`/`KIND_PRIORITY` + 策略包，只声明 `pricing` 直取通道）。`PRICING_HINTS` 覆盖 `价格|定价|收费|多少钱|便宜|成本|费用|单价|价位|报价|计费|免费额度|每百万|per token|/1k tokens|price|pricing|cost|billing` 等；命中价格词 `classify()` +6 并覆盖 `tech-selection`，法律/排障/争议题仍优先（`PRICE_DECISIVE_KINDS`），显式 `llmKind` 仍最终生效；`PRICE_COMPARE_HINTS`（`哪家便宜|对比|比较|cheaper|compare`…）命中时建议 `mode:'compare'`。`resolveStrategy` 再加一道兜底：问题命中价格词就删掉 `official-docs` 通道（即使硬传 `tech-selection`）。实测「国内大模型 API 价格对比…哪家便宜」从 0.8.2 的前 9 条全为 spring/langchain4j 文档页，变成 `adopted tiers: docPage 10`、前 10 条全是 DeepSeek/阿里云/火山价目页；A 题（RAG 选型）仍是 `docPage 10` + 官方查询 2 条，未被打扰。`SIGNAL_VERSION` 2 → 3。
 
+14. **答案层**（0.9.0）：简报第一行固定为 `**一句话：<结论>**`（≤80 字、有推荐对象就点名、每个可核查判断带 `[S#]`、无来源写 `（推断）`、证据不足先写 `**（证据不足，以下为初步判断）**`）；新增「## 行动清单」（3–5 条动词开头、≤60 字，compare 至少 1 条试点/验证，位置在方案对比之后、坑与风险之前，漏写补 `- 无` 并降档）；`markUnsourcedNumbers()` 给「## 方案对比」里没有 `[S#]` 的裸数字补 `（无来源）`（不删数字、幂等）。`requiredSectionsFor()` 把 compare / tech-selection / learning 的清单列为必需段，concept / track 只补占位。
+
 ## 已知缺口（不是 bug，是数据/结构限制）
 
 - 厂商 token 单价（如豆包）在官网 JS 渲染页后面，纯 HTTP 拿不到；`text` 参数可让用户贴正文直接进证据（0.6.0 新增）。
@@ -62,7 +65,7 @@ git -c http.sslBackend=openssl push origin main
 
 ## 下次接着做
 
-- 推送本地提交（0.7.0 之后又多了 0.7.1、0.8.0、0.8.1、0.8.2、0.8.3 的 5 个）；
+- 推送本地提交（0.7.0 之后又多了 0.7.1、0.8.0、0.8.1、0.8.2、0.8.3、0.9.0 的 6 个）；
 - 日常自检：怀疑「检索变差」时先跑 `node scripts/retrieval-check.mjs --question "…"`，看 `docPage/repoCode` 拆分与四数，别先跑完整研究（0.8.0）；`queries:` 行的「官方定向」是否为 0 是 0.8.1 的专项信号；价格题（0.8.3）看前 10 条 URL 是否全在厂商价目页、有没有混进 `docs.spring.io` / `docs.langchain4j.dev`。
 - 可选：`text` 参数做 UI 入口。
 - 运行手册与细节：`D:\Total\docs\superpowers\specs\2026-11-15-regression-0.6.md`、`2026-11-15-p5-research-hardening.md`、`2026-11-15-cross-domain-scan.md`。

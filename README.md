@@ -417,6 +417,15 @@ API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会
 
 ## 更新日志
 
+### 0.9.0（2026-11-15）
+
+- **答案层：第一行必须是一句话结论**：`lib/prompts.js` 的 `synthPrompt` 现在把「## 结论」的首行钉成 `**一句话：<结论>**`（≤80 字，有推荐对象就点名，如「选 Node 22 LTS」），之后才是 2–4 句前提/依据；结论段里每个可核查判断的末尾必须紧跟 `[S#]`，没有来源的判断显式写 `（推断）`。证据不足（无一手源或零定量）时，先在前面单独一行写 `**（证据不足，以下为初步判断）**` 再给一句话结论；旧的「初步判断（证据不足）」措辞已删除，避免模型把免责声明和结论写进同一行。
+- **新增「## 行动清单」段**：3–5 条，每条 `- ` 开头、动词开头、≤60 字、能直接执行；位置固定在「## 步骤」/「## 方案对比」之后、「## 坑与风险」之前；compare 类至少 1 条写「怎么小范围验证或试点」。`lib/brief.js` 的 `ensureSections()` 总会确保这一段存在：模型漏写时补 `## 行动清单\n- 无`，并且和既有缺段逻辑一致地参与降档。
+  - 新增导出 `requiredSectionsFor({ mode, questionKind, base })`：compare / tech-selection / learning 把行动清单当必需段（缺了降一档置信度），concept / track 等只补占位不降档；它会和策略包自己声明的 `brief.requiredSections` 合并，`lib/pipeline.js` 的 `requiredSections` 改走这个函数。
+- **定量对比的数字有出处**：`synthPrompt` 要求「## 方案对比」表的数字列每一行数字后都带 `[S#]`；`lib/brief.js` 新增 `markUnsourcedNumbers()`，在 `buildResult()` 里做一次兜底——表格行里没有 `[S#]` 的裸数字，在该单元格追加 `（无来源）` 而不是删掉数字，重复执行不会叠标记（幂等）。
+- **测试**：`test/prompts.test.js` 断言一句话格式、推断标注、行动清单位置/条数/动词/试点要求、数字出处指令；`test/brief.test.js` 断言缺段补 `- 无` 与段位、compare 必需 / concept 可选、裸数字兜底与幂等；`test/pipeline.test.js` 断言端到端（假模型）在 `> 检索流程：` 之后确实出现 `## 行动清单` 且段序为 方案对比 → 行动清单 → 坑与风险，compare 缺段降档、concept 不降档；`test/strategy-packs.test.js` 的 legacy 段序断言随新段更新。
+- 测试总数 329（新增 9：prompts +3、brief +3、pipeline +3；strategy-packs 的 legacy 段序断言按 0.9.0 段序改写 1 例，数量不变）。
+
 ### 0.8.3（2026-11-15）
 
 - **价格题不再被判成选型题，也不再被 Java 文档通道劫持**：0.8.2 实测 `node scripts/retrieval-check.mjs --question "国内大模型 API 价格对比：qwen、豆包、deepseek 哪家便宜" --depth standard` 得到 `adopted: docPage 9`，前 9 条全是 `docs.langchain4j.dev` / `docs.spring.io` 的 Java 文档页——问题里的「对比」命中对比措辞、「大模型」命中技术栈，于是 `classify()` 判成 `tech-selection`，走 `official-docs` 通道；问的是 API 价格，答的是 Java 手册。
