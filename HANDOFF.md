@@ -39,7 +39,7 @@
 - 发布守门批次（`e29db51`/`feb701a`/`796d712`）：`check-docs` 增加 Issue 表单结构校验（坏模板 GitHub 只是静默不显示）、`check-release` 增加「CHANGELOG 小节非空且不重复」（空正文会让 Release 页空白）、Release workflow 增加「tag 指向的提交必须是 `main` 祖先」的校验；2026-11-15 23:36 补打 annotated `v0.9.6`（`796d712`）与 `v0.9.7`（`9205223`），两个 Release 页由 workflow 自动生成
 - 文档入口：`README.md`（用法）→ `docs/architecture.md`（管线与通道）→ `docs/configuration.md`（全部配置）→ `docs/development.md`（测试与调试）→ `docs/release.md`（发布清单）
 - 仓库规整审计记录：`D:\Total\docs\superpowers\specs\2026-11-15-repo-hygiene-audit.md`（改前状态、改了什么、验证证据、只能手工的 5 项、每版固定动作）
-- 测试：19 个文件逐个跑，**382 例全绿**（0.9.8，`node scripts/test-all.mjs`，或 `node test/<file>.test.js` 让 node:test 在进程内跑；`node --test test/` 与 `node --test test/<file>` 在沙箱都会 EPERM；382 是 0.9.8 提交后整棵树的实测数，本版 `test/pipeline.test.js` 一个文件 83 → 90）
+- 测试：19 个文件逐个跑，**全部通过**（0.9.8，`node scripts/test-all.mjs`，或 `node test/<file>.test.js` 让 node:test 在进程内跑；`node --test test/` 与 `node --test test/<file>` 在沙箱都会 EPERM；具体以脚本输出为准，本版 `test/pipeline.test.js` 一个文件 83 → 90）
 
 ## 仓库规整（0.9.5 第二批，维护者视角）
 
