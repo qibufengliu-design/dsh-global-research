@@ -2,7 +2,7 @@
 
 ## 一句话状态
 
-插件可日常使用（P0–P8 + 0.6.x + 0.7.0 + 0.7.1 + 0.8.0 + 0.8.1 + 0.8.2 + 0.8.3 + 0.9.0 全部完成），**已推送到 GitHub**（`main` 随 0.6.8 推过；0.7.0、0.7.1、0.8.0、0.8.1、0.8.2、0.8.3、0.9.0 尚未推）。0.8.0 起有 `scripts/retrieval-check.mjs`：不跑完整研究、不花 LLM，就能验证「检索与选页」有没有退化；0.8.1–0.8.3 用它抓到并修掉了四处真实回归（compare 选项名带中文谓词、planner 不产出官方定向查询、不传 mode 时选型题落到 concept、价格题被 Java 文档通道劫持）。0.9.0 是「答案层」：简报首行一句话结论（带 `[S#]`/`（推断）`）、新增「## 行动清单」、方案对比裸数字兜底标 `（无来源）`。
+插件可日常使用（P0–P8 + 0.6.x + 0.7.0 + 0.7.1 + 0.8.0 + 0.8.1 + 0.8.2 + 0.8.3 + 0.9.0 + 0.9.1 全部完成），**已全部推送到 GitHub**（2026-11-15 用 `git ls-remote` 核实：`refs/heads/main` 与本地 HEAD 一致）。0.8.0 起有 `scripts/retrieval-check.mjs`：不跑完整研究、不花 LLM，就能验证「检索与选页」有没有退化；0.8.1–0.8.3 用它抓到并修掉了四处真实回归（compare 选项名带中文谓词、planner 不产出官方定向查询、不传 mode 时选型题落到 concept、价格题被 Java 文档通道劫持）。0.9.0 是「答案层」：简报首行一句话结论（带 `[S#]`/`（推断）`）、新增「## 行动清单」、方案对比裸数字兜底标 `（无来源）`。0.9.1 是**仓库规整 + 两处真实回归修复**：更新日志拆到 `CHANGELOG.md`，README 收敛为快速上手 + 索引，新增 `docs/` 四页与 `.github/`（CI / Issue 表单 / PR 模板 / Dependabot）及社区文件；同时修掉「8 条官方文档页覆盖三个手册段却判 low」（广度改按文档段计，跨源确认仍按站点计）与「对比题选项被冒号引导语/中文谓词切碎、表格全被误判无证据」（重写 `compareOptions()` 与 `countOptionHits()`）。
 
 ## 仓库与版本
 
@@ -26,7 +26,9 @@
   - 0.8.2（本次提交）不传 mode 时 classify 自认选型/对比题（`COMPARE_HINTS`/`TECH_HINTS`/`hasOptionList` + `classify().mode`）；hash 在此文件改写后生成，未回填
   - 0.8.3（本次提交）价格题 → 新 kind `pricing`（`PRICING_HINTS` 词表 + `PRICE_COMPARE_HINTS` + `PRICE_DECISIVE_KINDS` 优先级），`resolveStrategy` 对价格词问题删掉 `official-docs` 通道；hash 在此文件改写后生成，未回填
   - 0.9.0（本次提交）答案层：`synthPrompt` 首行 `**一句话：…**` + `[S#]`/`（推断）` 标注 + 新增「## 行动清单」；`lib/brief.js` 的 `ensureActionChecklist`/`requiredSectionsFor`/`markUnsourcedNumbers`（compare 缺清单降档、裸数字标 `（无来源）`）；hash 在此文件改写后生成，未回填
-- 测试：18 个文件逐个跑，**329 例全绿**（`node --test test/` 与 `node --test test/<file>` 在沙箱都会 EPERM，只能 `node test/<file>.test.js` 让 node:test 在进程内跑）
+  - 0.9.1 仓库规整 + 两处真实回归：① 规整——`CHANGELOG.md` 从 README 拆出（20 条历史）；README 重写为「快速上手 + 文档索引」；新增 `CONTRIBUTING.md` / `CODE_OF_CONDUCT.md` / `SECURITY.md` / `.editorconfig` / `.gitattributes` / `.github/**` / `docs/{architecture,configuration,development,release}.md` / `scripts/test-all.mjs`；`package.json` 补 `repository`/`homepage`/`bugs`/`author`/`scripts.test`；② A 题——`lib/util.js` 新增 `evidenceSiteKey()`（文档主机按 `host/首段` 计广度），`lib/brief.js` 的 `strong` 改用它、`confirmed` 仍用 `siteKey`，8 条官方文档 `low → medium`；③ B 题——`lib/pipeline.js` 的 `compareOptions()` 先取末个冒号后的部分再切分并丢弃引导语段，`countOptionHits()` 按核心 token（拉丁词边界 + 版本后缀 / 中文 ≥2 字子串）匹配，零证据 gap 与「无证据」行只给核心名 ≥2 字且命中 0 的选项
+- 文档入口：`README.md`（用法）→ `docs/architecture.md`（管线与通道）→ `docs/configuration.md`（全部配置）→ `docs/development.md`（测试与调试）→ `docs/release.md`（发布清单）
+- 测试：18 个文件逐个跑，**334 例全绿**（`node scripts/test-all.mjs`，或 `node test/<file>.test.js` 让 node:test 在进程内跑；`node --test test/` 与 `node --test test/<file>` 在沙箱都会 EPERM）
 
 ## 推送
 
@@ -34,10 +36,15 @@
 
 ```powershell
 cd D:\Total\dsh-global-research
-git -c http.sslBackend=openssl push origin main
+git -c http.sslBackend=openssl push origin main --follow-tags
+git -c http.sslBackend=openssl ls-remote origin HEAD refs/heads/main refs/tags/*   # 核对远端
 ```
 
 凭据管理器（GCM）会弹出一次授权；若用 PAT，则 `https://qibufengliu-design:<PAT>@github.com/...`。
+
+**0.9.1 起**每个版本都打 annotated tag `vX.Y.Z`（与 `package.json.version` 一致）并 `--follow-tags` 推送；`git ls-remote` 的 `refs/heads/main` 必须等于本地 `HEAD` 才算推送完成。
+
+**改不了的部分**：本机没装 `gh`、也没有 `GITHUB_TOKEN`/`GH_TOKEN`，所以远端仓库设置（描述、topics、分支保护、Release 页面、Issue 标签）只能手工在网页上做，无法脚本化。
 
 ## 这轮做了什么（用户可感）
 
@@ -57,15 +64,18 @@ git -c http.sslBackend=openssl push origin main
 
 14. **答案层**（0.9.0）：简报第一行固定为 `**一句话：<结论>**`（≤80 字、有推荐对象就点名、每个可核查判断带 `[S#]`、无来源写 `（推断）`、证据不足先写 `**（证据不足，以下为初步判断）**`）；新增「## 行动清单」（3–5 条动词开头、≤60 字，compare 至少 1 条试点/验证，位置在方案对比之后、坑与风险之前，漏写补 `- 无` 并降档）；`markUnsourcedNumbers()` 给「## 方案对比」里没有 `[S#]` 的裸数字补 `（无来源）`（不删数字、幂等）。`requiredSectionsFor()` 把 compare / tech-selection / learning 的清单列为必需段，concept / track 只补占位。
 
+15. **两处真实回归**（0.9.1）：① **置信度广度**——A 题 8 条官方文档（`docs.spring.io` 7 / `docs.langchain4j.dev` 1）覆盖三个手册段却判 `low`，因为广度集合用 `siteKey()` 只数 host；`lib/util.js` 新增 `evidenceSiteKey(url)`（文档主机或 `doc-page` → `host/首段`，github → 仓库，其余 → host），`lib/brief.js` 的 `strong` 改用它、`confirmed` 仍用 `siteKey`，同一厂商文档不算独立确认，A 题 `low → medium`。② **对比选项**——价格题三行全被判「无证据」且选项名带冒号引导语/中文谓词；`compareOptions()` 先取最后一个 `：`/`:` 之后的内容再按 `|` `/` `、` `，` `vs` `还是` 切分、丢弃含 `对比|价格|选型|哪个|怎么|如何` 的段，`countOptionHits()` 按核心 token 匹配（拉丁词边界 + `qwen` → `qwen2.5` 版本后缀、中文 ≥2 字子串），零证据只写给核心名 ≥2 字且命中 0 的选项。
+
 ## 已知缺口（不是 bug，是数据/结构限制）
 
 - 厂商 token 单价（如豆包）在官网 JS 渲染页后面，纯 HTTP 拿不到；`text` 参数可让用户贴正文直接进证据（0.6.0 新增）。
-- 零证据判定是「选项名 token 在 claim/证据文本里是否出现」，同义词（如 Haystack 写作 `haystack-ai`）可能漏判；漏判只会多一行提示，不会编造证据。
+- 零证据判定是「选项核心 token 在 claim/证据文本里是否出现」（0.9.1 起：拉丁词边界 + 允许版本后缀，中文 ≥2 字子串），同义词（如 Haystack 写作 `haystack-ai`）与更长的中文别名（如「豆包大模型」写作「豆包」以外的叫法）仍可能漏判；漏判只会多一行提示，不会编造证据。
 - 输入框只能显示/复制设置路径，不能就地切档（bundle 插件无 host 写通道；要做得改 Dynamic Cordis，见 README「设置页」）。
 
 ## 下次接着做
 
-- 推送本地提交（0.7.0 之后又多了 0.7.1、0.8.0、0.8.1、0.8.2、0.8.3、0.9.0 的 6 个）；
 - 日常自检：怀疑「检索变差」时先跑 `node scripts/retrieval-check.mjs --question "…"`，看 `docPage/repoCode` 拆分与四数，别先跑完整研究（0.8.0）；`queries:` 行的「官方定向」是否为 0 是 0.8.1 的专项信号；价格题（0.8.3）看前 10 条 URL 是否全在厂商价目页、有没有混进 `docs.spring.io` / `docs.langchain4j.dev`。
-- 可选：`text` 参数做 UI 入口。
+- **P1 剩余**：① `text` 参数的 UI 入口（粘贴资料直接进证据，host 半已支持，缺 client 入口）；② 证据排序量化（把 `docPage 10 / repoCode 0` 之类的采用档位做成回归断言，而不只看一眼）。
+- **远端仓库设置（需手工，脚本做不了）**：仓库描述、topics（`dsh` `dsh-plugin` `research` `deepseek`）、`main` 分支保护（要求 CI 通过）、0.9.0 / 0.9.1 的 GitHub Release（可直接引用 `CHANGELOG.md` 对应段落）。
+- 可在网页上给首个 Release 附截图（`docs/screenshots/`）。
 - 运行手册与细节：`D:\Total\docs\superpowers\specs\2026-11-15-regression-0.6.md`、`2026-11-15-p5-research-hardening.md`、`2026-11-15-cross-domain-scan.md`。

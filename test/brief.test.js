@@ -104,6 +104,29 @@ test('confidence reflects confirmed/disputed mix', () => {
   ]), 'medium')
 })
 
+// 0.9.1 — defect A: the breadth set keyed on hosts, so eight official pages on
+// docs.spring.io (7) + docs.langchain4j.dev (1) were one unit and a well-sourced
+// answer came back `low`. A documentation section is now the breadth unit; the
+// cross-source `confirmed` count keeps the coarser host key so one vendor's docs
+// never read as independent confirmation of each other.
+test('confidence breadth counts documentation sections, not just hosts (0.9.1)', () => {
+  const springAi = 'https://docs.spring.io/spring-ai/reference/api/chatclient.html'
+  const springBoot = 'https://docs.spring.io/spring-boot/reference/features/ai.html'
+  const langchain4j = 'https://docs.langchain4j.dev/tutorials/spring-boot-integration'
+  // Two doc sections of the same vendor: breadth 2 lifts `unverified` to medium.
+  assert.equal(computeConfidence([cluster('Spring AI 的 ChatClient 用法', [springAi]), cluster('Spring Boot 的 AI 自动配置', [springBoot])]), 'medium')
+  // A doc page on another docs host is a third section: still medium, never high
+  // (no primary-grade source, no cross-source confirmation).
+  assert.equal(computeConfidence([cluster('a', [springAi]), cluster('b', [springBoot]), cluster('c', [langchain4j])]), 'medium')
+  // Pages of the same section are counted once: no lift.
+  assert.equal(computeConfidence([
+    cluster('a', [springAi]),
+    cluster('b', ['https://docs.spring.io/spring-ai/reference/api/vectordbs.html']),
+  ]), 'low')
+  // Ordinary hosts keep the old behaviour: two pages of a.com are one unit.
+  assert.equal(computeConfidence([cluster('a', ['https://a.com/1']), cluster('b', ['https://a.com/2'])]), 'low')
+})
+
 test('fallbackBrief is deterministic and marks partial runs', () => {
   const clusters = [cluster('Node 22 is LTS', ['https://a.com', 'https://b.com'])]
   const brief = fallbackBrief({ question: 'which node', clusters, gaps: ['缺基准'], partial: true, reason: '超时' })

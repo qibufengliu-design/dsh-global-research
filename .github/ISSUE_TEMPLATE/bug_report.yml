@@ -1,0 +1,81 @@
+name: Bug 报告
+description: 报错、检索质量差、简报格式异常
+title: '[bug] '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。提交前请先确认：
+        - 已升级到最新版本（`package.json` 的 `version`）
+        - 已在 `node scripts/test-all.mjs` 全绿的前提下复现
+        - 不要贴真实 API key
+  - type: input
+    id: version
+    attributes:
+      label: 插件版本
+      description: package.json 里的 version
+      placeholder: 0.9.1
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node.js 版本
+      placeholder: v24.14.1
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      options: [Windows, macOS, Linux]
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: 复现用的问题原文
+      description: 请原样粘贴传给 research / retrieval-check 的 question
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: depth
+    attributes:
+      label: depth / mode
+      placeholder: standard / auto
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 简报里出问题的片段、统计行、或报错栈
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现命令
+      description: 优先给 retrieval-check（不调模型，最快定位）
+      render: shell
+      placeholder: node scripts/retrieval-check.mjs --question "..." --depth standard
+  - type: textarea
+    id: config
+    attributes:
+      label: 相关配置
+      description: cordis.patch.yml 里 config 段（隐去 key）
+      render: yaml
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 确认
+      options:
+        - label: 我确认上述内容不含 API key 或私密数据
+          required: true

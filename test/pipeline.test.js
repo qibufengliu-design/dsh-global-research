@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { runResearch, groupEvidence, looksLikeFollowUp, extractEvidence, pickDocBases, compareOptions, officialBackstopQueries } from '../lib/pipeline.js'
+import { runResearch, groupEvidence, looksLikeFollowUp, extractEvidence, pickDocBases, compareOptions, countOptionHits, evidenceSiteKey, officialBackstopQueries } from '../lib/pipeline.js'
 import { downgradeConfidence } from '../lib/brief.js'
 import { resolveStrategy } from '../lib/strategy.js'
 import { dedupeHits, rankHits } from '../lib/util.js'
@@ -1508,6 +1508,133 @@ test('zero-evidence gap names the trimmed option (0.8.1)', async () => {
   assert.ok(zero.length > 0, JSON.stringify(result.gaps))
   assert.ok(!/选项「[^」]*该」/.test(zero), zero)
   assert.ok(!/选项「[^」]*怎么选」/.test(zero), zero)
+})
+
+// 0.9.1 — defect B, part 1: the question's colons and comma lists were kept in
+// the option names ("选项「国内大模型 API 价格对比：qwen」"), so a price table's
+// rows matched nothing and every row was rewritten to 无证据.
+test('compareOptions drops the guidance clause of a colon-led price question (0.9.1)', () => {
+  const options = compareOptions('国内大模型 API 价格对比：qwen、豆包、deepseek 哪家便宜')
+  assert.deepEqual(options, ['qwen', '豆包', 'deepseek'], JSON.stringify(options))
+})
+
+// 0.9.1 — defect B, part 2: hits were whole-string matches, so "qwen" never hit
+// a claim that says "qwen2.5" and a row with a real price was called 无证据.
+test('countOptionHits matches the option core token, not the whole string (0.9.1)', () => {
+  const clusters = [
+    { claim: 'qwen2.5 的输入价约 4 元/百万 tokens', evidence: [{ claim: 'qwen2.5-72b 输入价 4 元', quote: 'qwen2.5 input price is about 4 CNY per million tokens.' }] },
+    { claim: 'deepseek-chat 的输入价约 2 元/百万 tokens', evidence: [{ claim: 'deepseek 定价 2 元', quote: 'deepseek-chat input price is about 2 CNY per million tokens.' }] },
+  ]
+  assert.equal(countOptionHits('qwen', clusters), 1)
+  assert.equal(countOptionHits('deepseek', clusters), 1)
+  assert.equal(countOptionHits('豆包', clusters), 0)
+  // Version suffixes match (qwen → qwen2.5), longer words do not (bun → bundle),
+  // and hyphenated names keep matching their own spelling.
+  assert.equal(countOptionHits('spring-ai', [{ claim: 'spring-ai 支持 RAG', evidence: [] }]), 1)
+  assert.equal(countOptionHits('bun', [{ claim: 'a bundle of tools', evidence: [] }]), 0)
+  assert.equal(countOptionHits('bun', [{ claim: 'bun ships a runtime', evidence: [] }]), 1)
+})
+
+// 0.9.1 — the two halves together on the reported input: three named vendors,
+// price evidence for two of them, and exactly one row that must say 无证据.
+function priceSynthReply() {
+  return [
+    '## 结论',
+    '价格维度上 deepseek 更低 [S2]。',
+    '',
+    '## 依据',
+    '- qwen2.5 输入价约 4 元/百万 tokens [S1]',
+    '- deepseek-chat 输入价约 2 元/百万 tokens [S2]',
+    '',
+    '## 方案对比',
+    '| 方案 | 输入价 | 备注 | 适用条件 |',
+    '| --- | --- | --- | --- |',
+    '| qwen | 约 4 元/百万 tokens [S1] | 阿里云百炼 | 中文场景 |',
+    '| 豆包 | 无证据 | 火山方舟 | 国内调用 |',
+    '| deepseek | 约 2 元/百万 tokens [S2] | 官方 API | 成本敏感 |',
+    '',
+    '## 行动清单',
+    '- 先用 deepseek 跑一轮离线评测',
+    '',
+    '## 坑与风险',
+    '价格随促销调整',
+    '',
+    '## 置信度',
+    'medium',
+    '',
+    '## 未解决',
+    '无。',
+  ].join('\n')
+}
+
+function priceResponder(options) {
+  const prompt = options.user ?? ''
+  if (prompt.includes('研究简报')) return priceSynthReply()
+  if (prompt.includes('<untrusted>')) {
+    return JSON.stringify([
+      { claim: 'qwen2.5 的输入价约 4 元/百万 tokens', quote: 'qwen2.5 input price is about 4 CNY per million tokens.', source: 0, type: 'docs', stance: 'support' },
+      { claim: 'deepseek-chat 的输入价约 2 元/百万 tokens', quote: 'deepseek-chat input price is about 2 CNY per million tokens.', source: 1, type: 'docs', stance: 'support' },
+    ])
+  }
+  if (prompt.includes('拆解')) {
+    return JSON.stringify({
+      subQuestions: [{ q: 'qwen、豆包、deepseek 的 API 价格分别是多少？', why: '价格对比基线', evidence: 'docs' }],
+      constraints: [],
+      criteria: ['输入价'],
+      language: 'zh',
+    })
+  }
+  if (prompt.includes('缺口')) return JSON.stringify({ queries: [], reason: '无' })
+  return '{}'
+}
+
+function priceFetcher() {
+  return async (url) => ({
+    url, finalUrl: url, title: `page ${url}`, domain: new URL(url).hostname,
+    text: 'qwen2.5 input price is about 4 CNY per million tokens. deepseek-chat input price is about 2 CNY per million tokens.',
+    ok: true,
+  })
+}
+
+test('a price comparison flags only the option that has no evidence (0.9.1)', async () => {
+  const question = '国内大模型 API 价格对比：qwen、豆包、deepseek 哪家便宜'
+  const config = baseConfig()
+  config.__fetchPage = priceFetcher()
+  const result = await runResearch({
+    question,
+    depth: 'quick',
+    mode: 'compare',
+    config,
+    llm: fakeLlm(priceResponder),
+    selection,
+    logger: () => {},
+  })
+  const zero = result.gaps.filter((gap) => gap.includes('零证据'))
+  assert.equal(zero.length, 1, JSON.stringify(result.gaps))
+  assert.ok(zero[0].includes('选项「豆包」'), zero[0])
+  assert.match(result.brief, /^\| 豆包 \| 无证据 \| 无证据 \| 无证据 \|$/m)
+  // The rows that do carry price evidence keep their citations untouched.
+  assert.match(result.brief, /^\| qwen \| 约 4 元\/百万 tokens \[S\d\]/m)
+  assert.match(result.brief, /^\| deepseek \| 约 2 元\/百万 tokens \[S\d\]/m)
+})
+
+// 0.9.1 — defect A's key: doc sections vs repositories vs plain hosts.
+test('evidenceSiteKey keys doc sections, repositories and hosts (0.9.1)', () => {
+  const springAi = 'https://docs.spring.io/spring-ai/reference/api/chatclient.html'
+  const springBoot = 'https://docs.spring.io/spring-boot/reference/features/ai.html'
+  assert.equal(evidenceSiteKey(springAi), 'docs.spring.io/spring-ai')
+  assert.equal(evidenceSiteKey(springBoot), 'docs.spring.io/spring-boot')
+  assert.notEqual(evidenceSiteKey(springAi), evidenceSiteKey(springBoot))
+  // Same section, different page → one unit.
+  assert.equal(evidenceSiteKey('https://docs.spring.io/spring-ai/reference/api/vectordbs.html'), 'docs.spring.io/spring-ai')
+  // github is per repository, not per file.
+  assert.equal(evidenceSiteKey('https://github.com/spring-projects/spring-ai/blob/main/README.md'), 'github.com/spring-projects/spring-ai')
+  assert.equal(evidenceSiteKey('https://github.com/spring-projects/spring-ai/issues/1'), 'github.com/spring-projects/spring-ai')
+  // Ordinary sites stay host-level, like the confirmation key.
+  assert.equal(evidenceSiteKey('https://a.com/1'), 'a.com')
+  assert.equal(evidenceSiteKey('https://a.com/2'), 'a.com')
+  assert.equal(evidenceSiteKey('not a url'), '')
+  assert.equal(evidenceSiteKey(''), '')
 })
 
 function queryRecordingEngine(record, urls = ['https://nodejs.org/1', 'https://github.com/x/y']) {

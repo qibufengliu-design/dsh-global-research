@@ -1,12 +1,9 @@
 {
   "name": "@local/dsh-global-research",
-  "version": "0.9.0",
-  "description": "Orchestrated global research for DeepSeek Harness: decompose, multi-source search, read, cross-verify, synthesize a cited brief.",
+  "version": "0.9.1",
+  "description": "DeepSeek Harness 的 research 工具：把开放问题做成带引用、可核查的研究简报（零依赖）",
   "type": "module",
   "main": "./index.js",
-  "scripts": {
-    "retrieval-check": "node scripts/retrieval-check.mjs"
-  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -16,9 +13,40 @@
     "index.js",
     "client.js",
     "lib",
+    "scripts",
+    "docs",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qibufengliu-design/dsh-global-research.git"
+  },
+  "homepage": "https://github.com/qibufengliu-design/dsh-global-research#readme",
+  "bugs": {
+    "url": "https://github.com/qibufengliu-design/dsh-global-research/issues"
+  },
+  "author": "liuqibufeng",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "research",
+    "web-search",
+    "rag",
+    "citation",
+    "deepseek"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node scripts/test-all.mjs",
+    "e2e": "node scripts/e2e-real.mjs",
+    "retrieval-check": "node scripts/retrieval-check.mjs"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -27,15 +55,5 @@
       "platform": "web",
       "immediately": true
     }
-  },
-  "engines": {
-    "node": ">=20"
-  },
-  "keywords": [
-    "dsh-plugin",
-    "research",
-    "web-search",
-    "synthesis"
-  ],
-  "license": "MIT"
+  }
 }

@@ -1,0 +1,25 @@
+name: 使用问题
+description: 安装、配置、效果不符合预期
+title: '[question] '
+labels: ['question']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        先查 [README 的常见问题](../README.md#常见问题) 与 [docs/configuration.md](../docs/configuration.md)。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你遇到的问题
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: 已经试过什么
+  - type: textarea
+    id: env
+    attributes:
+      label: 环境
+      description: 版本、Node 版本、启用了哪些引擎（隐去 key）
+      render: text

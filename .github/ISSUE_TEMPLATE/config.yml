@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全问题（请勿公开）
+    url: https://github.com/qibufengliu-design/dsh-global-research/security/advisories/new
+    about: 报告漏洞请走私密 Advisory，不要开公开 issue
+  - name: 使用文档
+    url: https://github.com/qibufengliu-design/dsh-global-research#readme
+    about: 安装、参数、配置与常见问题
