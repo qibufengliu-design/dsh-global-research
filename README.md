@@ -237,3 +237,42 @@ API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会
 ![插件设置页：研究深度](docs/screenshots/02-settings.png)
 
 ![输入框右侧的深度胶囊](docs/screenshots/03-composer.png)
+## 常见问题
+
+**为什么查不到某个官网的价格/参数？**
+官网多是 JS 渲染或登录墙。直接把 URL 贴进问题里，工具会优先直取该页（`URL 直取`），不依赖搜索引擎召回。
+
+**为什么 confidence 经常是 low？**
+low 表示关键结论缺少一手或独立来源，简报会写出缺口。这不是失败，而是诚实标注；按「未解决」补一轮 research 或给 URL 通常能升到 medium/high。
+
+**要花钱吗？**
+本体免费。检索默认走 `ctx-web` 与 DuckDuckGo；DuckDuckGo 在很多网络下会被 challenge 拦截，所以建议配一个免费的 Tavily key（每月 1000 次）。
+
+**会编造引用吗？**
+不会。证据必须能在抓到的正文里匹配到才保留；引用编号会被校验，悬空的 `[S#]` 会被删掉或标为「来源未列出」。
+
+**数据会上传吗？**
+只把问题与抓到的正文片段交给本机配置的模型；缓存与追问会话只在内存里，30 分钟过期，不落盘。
+
+## 架构（一图流）
+
+```
+research(question, depth, focus, mode, context, researchId, saveTo)
+   │
+   ├─ 拆题 → 生成 query（模板 + 模型规划，中英双语/定向官方站）
+   ├─ 检索：付费引擎(Tavily/Brave/Serper/Exa) → ctx-web → DDG；垂直源直连(GitHub/arXiv/OpenAlex/SE/npm/HN/PyPI)
+   ├─ URL 直取：用户贴的 URL 与 planner 给的官方 URL 优先抓
+   ├─ 抓取分层：raw → web.fetch → Jina；EUR-Lex 走 Cellar XHTML；SO/HN 用 API 正文兜底
+   ├─ 证据卡 + 引用接地（原文匹配）+ 交叉验证（多域名/立场）
+   ├─ 缺口回补（含官方/法规定向 query）
+   └─ 合成简报：结论/依据/对比/坑/置信度/未解决/参考 + 统计行
+```
+
+## 开发
+
+```bash
+node test/*.test.js     # 逐文件跑（node --test 在沙箱里会 spawn EPERM）
+node --check index.js client.js
+```
+
+改完代码后必须 `plugin_manager` 里 disable → enable 重载；client 半（卡片/胶囊）需要**完全重启桌面应用**才生效。
