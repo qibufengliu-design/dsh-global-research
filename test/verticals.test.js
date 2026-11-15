@@ -29,6 +29,21 @@ test('pickVerticals respects disabled verticals', () => {
   assert.deepEqual(picked, [])
 })
 
+test('pickVerticals honours strategy allow/deny/limit without changing the default', () => {
+  const question = 'React 19 的 use() 和 useEffect 在数据获取上怎么选？'
+  // No strategy arguments == the legacy keyword scoring, exactly.
+  assert.deepEqual(pickVerticals({ question }), pickVerticals({ question, allow: [], deny: [], limit: 2 }))
+  // allow pins a vertical first, but deny and enabled still win.
+  assert.deepEqual(pickVerticals({ question, allow: ['hn'], limit: 2 })[0], 'hn')
+  assert.ok(!pickVerticals({ question, allow: ['hn'], deny: ['hn'] }).includes('hn'))
+  assert.ok(!pickVerticals({ question, allow: ['hn'], enabled: { hn: false } }).includes('hn'))
+  // limit caps the result, and allow fills it before scoring.
+  assert.deepEqual(pickVerticals({ question, allow: ['hn', 'npm'], limit: 2 }), ['hn', 'npm'])
+  assert.equal(pickVerticals({ question, limit: 1 }).length, 1)
+  // Unknown names are ignored instead of leaking into the search list.
+  assert.deepEqual(pickVerticals({ question: '欧盟法规', allow: ['not-a-vertical'] }), [])
+})
+
 function fakeFetch(payloads) {
   return async (url) => {
     const entry = Object.entries(payloads).find(([needle]) => url.includes(needle))

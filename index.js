@@ -14,6 +14,7 @@ import { ResearchSessions } from './lib/sessions.js'
 import { validateConfig } from './lib/config.js'
 import { Config } from './lib/schema.js'
 import { configureDomainTrust, isTimeSensitive, uniqueStrings } from './lib/util.js'
+import { normalizeMode } from './lib/strategy.js'
 
 export const inject = ['tools']
 
@@ -216,10 +217,13 @@ export function apply(ctx, rawConfig = {}) {
       const focus = uniqueStrings(Array.isArray(args?.focus) ? args.focus : []).slice(0, 6)
       const depth = args?.depth ?? liveDepthDefault()
       const outputLanguage = args?.outputLanguage ?? 'auto'
+      // An illegal mode must not leak into the prompt or the cache key: normalize
+      // once here, then use the same value for both.
+      const mode = normalizeMode(args?.mode ?? 'explain')
       // "Latest / price / version" answers go stale in minutes; never serve
       // those from cache (a false positive only costs one re-run).
       const timeSensitive = isTimeSensitive(`${question} ${focus.join(' ')}`)
-      const key = cache && !timeSensitive && !context && !resume ? cacheKey({ question, depth, focus, language: outputLanguage }) : undefined
+      const key = cache && !timeSensitive && !context && !resume ? cacheKey({ question, depth, focus, language: outputLanguage, mode }) : undefined
       if (cache && key) {
         const cached = cache.get(key)
         if (cached) {
@@ -245,7 +249,7 @@ export function apply(ctx, rawConfig = {}) {
         focus,
         depth,
         outputLanguage,
-        mode: args?.mode ?? 'explain',
+        mode,
         context,
         resume,
         onState: (snapshot) => { nextSession = snapshot },

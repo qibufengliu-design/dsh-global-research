@@ -10,6 +10,23 @@ test('cacheKey ignores whitespace, case and focus order but keeps focus content'
   assert.notEqual(base, cacheKey({ question: 'node 24 lts?', depth: 'standard', focus: ['稳定性', '迁移成本'] }))
 })
 
+test('cacheKey separates modes so one question cannot reuse another mode brief', () => {
+  const question = 'Node 22 还是 24？'
+  const explain = cacheKey({ question, depth: 'standard', mode: 'explain' })
+  assert.notEqual(explain, cacheKey({ question, depth: 'standard', mode: 'compare' }))
+  assert.notEqual(explain, cacheKey({ question, depth: 'standard', mode: 'track' }))
+  assert.notEqual(explain, cacheKey({ question, depth: 'standard', mode: 'evaluate' }))
+  // An illegal mode is normalised, so it shares the explain entry instead of
+  // creating a stray key that would return a differently shaped brief.
+  assert.equal(explain, cacheKey({ question, depth: 'standard', mode: 'nonsense' }))
+  // Omitting mode means the default, which is explain.
+  assert.equal(explain, cacheKey({ question, depth: 'standard' }))
+  // Optional classifier keys only participate when provided.
+  assert.equal(explain, cacheKey({ question, depth: 'standard', questionKind: undefined, signalVersion: undefined }))
+  assert.notEqual(explain, cacheKey({ question, depth: 'standard', questionKind: 'legal' }))
+  assert.notEqual(explain, cacheKey({ question, depth: 'standard', signalVersion: 2 }))
+})
+
 test('cache returns a value until the ttl expires', () => {
   let now = 1000
   const cache = new ResearchCache({ maxEntries: 4, ttlMs: 5000, now: () => now })

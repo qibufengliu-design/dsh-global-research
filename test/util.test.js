@@ -55,6 +55,31 @@ test('rankHits prefers trusted domains and engine consensus', () => {
   assert.ok(domainTrust(ranked[0].url) >= 2)
 })
 
+test('rankHits boosts are additive and leave the default order untouched', () => {
+  const hits = dedupeHits([
+    { url: 'https://example.com/a', title: 'Node 22 release notes', engine: 'ctx-web' },
+    { url: 'https://github.com/nodejs/node', title: 'Node 22 repository', engine: 'ctx-web' },
+    { url: 'https://news.ycombinator.com/item?id=1', title: 'Node 22 discussion', engine: 'ctx-web' },
+    { url: 'https://www.nist.gov/report', title: 'Node 22 security report', engine: 'ctx-web' },
+  ])
+  const urls = (list) => list.map((hit) => hit.url)
+  const plain = rankHits(hits, { question: 'node 22' })
+  // undefined boosts is the historical ranking: no hidden extra term.
+  assert.deepEqual(urls(rankHits(hits, { question: 'node 22', boosts: undefined })), urls(plain))
+  assert.deepEqual(urls(rankHits(hits, { question: 'node 22', boosts: {} })), urls(plain))
+  // A domain boost lifts a normally-low hit to the top.
+  assert.equal(
+    rankHits(hits, { question: 'node 22', boosts: { domains: { 'news.ycombinator.com': 9 } } })[0].url,
+    'https://news.ycombinator.com/item?id=1',
+  )
+  // Same for the official-domain term; unknown engine names are ignored.
+  assert.ok(rankHits(hits, { question: 'node 22', boosts: { official: 9 } })[0].url.endsWith('nist.gov/report'))
+  assert.deepEqual(
+    urls(rankHits(hits, { question: 'node 22', boosts: { engines: { nope: 9 }, official: 0 } })),
+    urls(plain),
+  )
+})
+
 test('parseLooseJson survives fences, prose and trailing commas', () => {
   assert.deepEqual(parseLooseJson('```json\n{"a":1,}\n```'), { a: 1 })
   assert.deepEqual(parseLooseJson('好的，结果如下：\n{"a":[1,2],}'), { a: [1, 2] })
