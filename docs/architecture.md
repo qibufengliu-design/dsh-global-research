@@ -103,6 +103,7 @@ research(question, depth, focus, mode, context, researchId, text, saveTo)
 - 一手来源门槛：standard/deep 档若全部证据都来自二手解读（没有可信域名/官方来源），置信度强制降为 `low`，并在「未解决」写明缺口。
 - 置信度分两个口径（0.9.1）：**广度**用 `evidenceSiteKey()`——文档主机（`docs.*` / `help.*`，或 `sourceTier === 'doc-page'`）按 `host/首段路径` 计，github 按仓库计，其余按 host 计，所以 8 条官方文档覆盖 ≥2 个手册段即可从 `low` 升到 `medium`；**跨源确认** `confirmed` 仍用粗粒度的 `siteKey()`，同一厂商的不同文档段不会被当成互相独立确认。
 - 页面兜底：模型只引用了部分页面时，没被引用的页面各补一条启发式证据（官方/通道页段落门槛 60 字符，其余 120 字符），避免「读到了却没采用」。
+- 证据抽取并行：按 2 页一批（`EVIDENCE_CONCURRENCY = 2`）同时抽，单批失败（典型是双批并发下的 provider 429）记日志后回落逐页启发式；结果按批序合并，`[S#]` 编号与「参考」顺序与串行完全一致（0.9.5）。
 
 ## 冲突三分
 

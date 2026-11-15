@@ -23,6 +23,13 @@
 - **墙钟预算上调**：`DEPTH_PROFILES.wallMs` quick 90s→120s、standard 180s→240s、deep 300s→360s（保持 quick<standard<deep）；`index.js` 工具超时仍是 `max(config.timeoutMs, deep.wallMs) + 20s`，下限随之到 380s。
 - **定向回补时间守卫 30s→45s**：并新增降级路径——剩余 <45s 但 ≥20s 且还有页预算时只跑 1 条 query、最多 1 页（`TARGETED_REFILL.degradedMinRemainingMs = 20000`），跑完即停；剩余 <20s 才仍写「剩余时间不足」跳过标注。
 
+### 仓库
+
+- **Release 自动化**：新增 `.github/workflows/release.yml`——推 `v*` tag 时用 `CHANGELOG.md` 里该版本的段落创建 GitHub Release；发布前校验 tag 与 `package.json.version` 一致，已存在的 Release 不覆盖（可重复触发）；历史 tag 可用 `workflow_dispatch` 补建。配套 `scripts/release-notes.mjs` 负责抽取版本段落。
+- **整洁性检查**：新增 `scripts/check-docs.mjs`（必需文件、Markdown 相对链接、CHANGELOG 版本条目、`package.json` 元数据与零依赖），接进 CI 的 `docs` job；`test/repo-hygiene.test.js` 3 例覆盖段落抽取与检查逻辑。
+- **CI 与依赖**：Actions 升到 `actions/checkout@v7` / `actions/setup-node@v7`（与 Dependabot 提的 #1、#2 对齐），语法检查从两个入口文件扩到全部 `.js`/`.mjs`；`.github/CODEOWNERS` 就位；Dependabot 把 Actions 更新聚成一个 PR、npm 只保留「误引入依赖」的月检。
+- **规则与忽略**：`docs/release.md` 改为「只打 annotated tag、已推送 tag 不移动、文档不写死测试数、提交身份要求、Actions 版本策略」；`CONTRIBUTING.md` 的 PR 检查表加 `check-docs` 与 tag 规则；`.gitignore` 补 `.cache/`（缓存默认落盘位置）与编辑器目录。
+
 ### Tests
 
 - `test/pipeline.test.js` +4、改写 1：并发提取（假模型观测到同时 2 批在飞，完成顺序与批次顺序不同、合并结果仍按批序）、单批失败降级为启发式、30s 余量降级为 1 条 query、`droppedNoEvidence`/原因分布统计与简报原因句；0.9.3 的墙钟跳过用例 skew 改按 360s 预算计。

@@ -1,6 +1,7 @@
 # dsh-global-research
 
 [![CI](https://github.com/qibufengliu-design/dsh-global-research/actions/workflows/ci.yml/badge.svg)](https://github.com/qibufengliu-design/dsh-global-research/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/qibufengliu-design/dsh-global-research)](https://github.com/qibufengliu-design/dsh-global-research/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](package.json)
 
@@ -99,9 +100,9 @@ plugin_manager set_plugin target: include:global-research enabled: true
 
 | depth | queries | pages | LLM 轮 | 补搜轮 | 墙钟 |
 |---|---|---|---|---|---|
-| quick | 2 | 3 | 6 | 0 | 90s |
-| standard | 6 | 12 | 14 | 1 | 180s |
-| deep | 16 | 30 | 28 | 1 | 300s |
+| quick | 2 | 3 | 6 | 0 | 120s |
+| standard | 6 | 12 | 14 | 1 | 240s |
+| deep | 16 | 30 | 28 | 1 | 360s |
 
 超出预算或时间返回 `partial: true`，并在「未解决」写明剩余问题，不编造。同一 agent 在进程内最多 5 次 `deep`，超出自动降为 `standard`。
 
@@ -177,7 +178,7 @@ Web 端不再是通用工具行，而是一张卡片：置信度徽章（高/中
 ## 开发
 
 ```powershell
-node scripts/test-all.mjs      # 逐文件跑全部 337 例（沙箱里 node --test test/ 会 spawn EPERM）
+node scripts/test-all.mjs      # 逐文件跑全部测试（沙箱里 node --test test/ 会 spawn EPERM）
 node --check index.js client.js
 ```
 

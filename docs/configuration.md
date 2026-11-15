@@ -28,7 +28,7 @@
 | `pageFetcher` | `raw` | 正文抓取路径：`raw` = 自带 HTTP + 抽取（最忠实，默认）；`web` = 只用宿主 `web.fetch`；`auto` = 先 web，正文太薄再用 raw 重试 |
 | `useJinaFallback` | `false` | JS 重站点用 `r.jina.ai` 兜底取正文 |
 | `docHostRewrite` | `3` | sitemap `<loc>` 跨主机改写：`docs.*` 文档站点的 sitemap 若仍指向旧主机，最多探测前 N 条并换成本主机；设 `0` 关闭 |
-| `timeoutMs` | `120000` | 工具级超时下限；实际取 `max(配置, deep 的 300s) + 20s`，避免 deep 被工具超时先杀掉 |
+| `timeoutMs` | `120000` | 工具级超时下限；实际取 `max(配置, deep 的 360s) + 20s`，避免 deep 被工具超时先杀掉 |
 | `verboseLog` | `false` | 打印引擎失败、重试等日志 |
 | `debugStats` | `false` | 在简报末尾额外附「调试统计」一行（引擎、垂直源、官方直取、回补、域名），排查召回问题时用 |
 | `cache.enabled` | `true` | 同一问题在 TTL 内复用上一次简报，不再花检索与模型额度；`partial` 结果不入缓存 |
