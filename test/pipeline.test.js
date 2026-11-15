@@ -1031,11 +1031,12 @@ test('a sitemap channel tries its declared bases in order until one answers', as
     selection,
     logger: () => {},
   })
-  // react.dev is tried first (both conventional paths), then the next declared
-  // root answers; the channel does not give up after the first 404.
+  // react.dev is tried first (all three conventional paths), then the next
+  // declared root answers; the channel does not give up after the first 404.
   assert.deepEqual(sitemapRequests, [
     'https://react.dev/sitemap.xml',
     'https://react.dev/sitemap_index.xml',
+    'https://react.dev/sitemap-index.xml',
     'https://nodejs.org/sitemap.xml',
   ])
   assert.equal(result.stats.sitemapPages, 3)

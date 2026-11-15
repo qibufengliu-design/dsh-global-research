@@ -256,10 +256,12 @@ $env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
 `pricing` 的 `seeds` 只在价格类问题出现（`resolveStrategy` 对非价格问题会剥掉通道上的 `seeds`），否则发布/EOL 类问题会把
 整档页预算花在厂商价目页上。
 
-**sitemap 定向爬取**（`lib/sources.js`）：`crawlSitemap` 先取 `https://host/sitemap.xml`，失败再试 `sitemap_index.xml`；
-`sitemapindex` 只向下跟一层子 sitemap；解析 `<loc>` 后按问题关键词（latin token + CJK 短片段）对路径分词打分，取前 N 条。
-约束：单站最多 2 次 sitemap HTTP，请求间隔 ≥400ms，失败返回 `{ ok: false, reason }` 不抛异常；
-不解析 robots.txt（已知限制）。
+**sitemap 定向爬取**（`lib/sources.js`）：`crawlSitemap` 按 `sitemap.xml` → `sitemap_index.xml` → `sitemap-index.xml`
+顺序探测（0.6.4 起含连字符形式，`paths` 参数可覆盖顺序）；只有 `parseSitemap` 真的解析出 `<loc>` 才算命中，
+返回 `text/xml` 但内容是 HTML 页的软 404 会继续试下一个候选。命中 `sitemapindex` 时再额外花 1 次请求展开子 sitemap（只跟一层）；
+解析 `<loc>` 后按问题关键词（latin token + CJK 短片段）对路径分词打分，取前 N 条。
+约束：单站最多 3 次候选路径 HTTP（全 404 时正好 3 次），命中 index 再加 1 次展开（合计最多 4 次），请求间隔 ≥400ms，
+失败返回 `{ ok: false, reason }` 不抛异常；不解析 robots.txt（已知限制）。
 
 **预算与失败**：sitemap 抓回的页面走同一条 `__fetchPage`，成功一页扣一格页预算（`budget.take('pages')`），
 预算不够就少抓；失败只记 `stats.sourceFailures`（数量）和内部 `{channel, host, reason}`，不中断管线。
@@ -274,10 +276,10 @@ $env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
 
 已知限制：
 
-- Spring 家族的 sitemap 实际是 `spring.io/sitemap-index.xml`（连字符形式），而 `crawlSitemap` 只试 `sitemap.xml` /
-  `sitemap_index.xml`，所以 `bases` 里的 `docs.spring.io` 根目前多半 404；通道会继续顺序尝试后面的根，但 Spring 文档站
-  仍可能一条都爬不到（0.6.3 起至少不再只试根域一处）。
-- `sitemapindex` 只跟一层，嵌套更深的站点会少抓。
+- Spring 家族的入口是 `spring.io/sitemap-index.xml`（连字符），0.6.4 起能命中：真实网络验证 `crawlSitemap({ baseUrl: 'https://spring.io' })`
+  返回 `ok: true`，经 `sitemap-index.xml` 展开到 `sitemap-0.xml`（7475 条 `<loc>`）。但 `docs.spring.io` 自身的三条候选路径实测全 404
+  （`sitemap.xml` / `sitemap_index.xml` / `sitemap-index.xml`），所以 `bases` 里的 docs 根仍会失败并回退到下一个根。
+- `sitemapindex` 只跟一层，嵌套更深的站点会少抓；index 命中的是最后一个候选时，展开子图会多花 1 次请求（上限内）。
 - `api` 通道仅声明不执行；`renderFallback` 未接线。
 - 不读 robots.txt，也不做 crawl-delay 之外的站点限速。
 
@@ -361,6 +363,16 @@ API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会
 **价格题强制标币种**（0.6.3）：`synthPrompt` 规定价格表必须有一列「币种/单位」；不同币种不得直接比较大小、不得合并排序或得出「更便宜」，「## 未解决」里要写明「币种不同，未换算」；汇率没在证据里出现就不自行折算。断言层也同样处理：不可换算的价格对（元 vs 美元）标 `unitMismatch`，只进 `### 口径差异`，不进 `### 事实冲突`。
 
 ## 更新日志
+
+### 0.6.4（2026-11-15）
+
+- **sitemap 路径候选**：`crawlSitemap` 从「`sitemap.xml` / `sitemap_index.xml` 两条、最多 2 次请求」改为有序候选
+  `sitemap.xml` → `sitemap_index.xml` → `sitemap-index.xml`（`SITEMAP_PATHS` 导出，`paths` 参数可覆盖）。全 404 时正好 3 次请求；
+  命中 `sitemapindex` 再允许 1 次展开子图（合计最多 4 次）。
+- **软 404 不算命中**：候选是否成功改由 `parseSitemap` 的 `<loc>` 数决定，返回 `text/xml` 的 HTML 错误页会继续下一个候选。
+- 真实网络验证：`crawlSitemap({ baseUrl: 'https://spring.io' })` → `ok: true`，`sitemap-index.xml` → `sitemap-0.xml`（7475 条 `<loc>`），
+  按 `spring/boot/configuration` 命中 3 条 spring.io 页面；`docs.spring.io` 三条候选仍全 404（`ok: false`）。
+- 测试总数 269。
 
 ### 0.6.3（2026-11-15）
 

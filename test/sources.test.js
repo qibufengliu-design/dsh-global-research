@@ -97,8 +97,78 @@ test('crawlSitemap returns a reason instead of throwing when no sitemap exists',
   assert.equal(result.ok, false)
   assert.match(result.reason, /sitemap\.xml: HTTP 404/)
   assert.match(result.reason, /sitemap_index\.xml: HTTP 404/)
-  // Two conventional paths, never more than two requests.
+  // 0.6.4: three ordered candidates (including the hyphen form Spring uses),
+  // never more than three requests.
+  assert.deepEqual(seen, [
+    'https://docs.spring.io/sitemap.xml',
+    'https://docs.spring.io/sitemap_index.xml',
+    'https://docs.spring.io/sitemap-index.xml',
+  ])
+})
+
+test('an HTML soft-404 is not a hit: the crawl falls through to the next candidate', async () => {
+  const seen = []
+  const fetchRaw = async (url) => {
+    seen.push(url)
+    // A host that answers 200 text/xml with its HTML 404 page for any unknown path.
+    if (url.endsWith('/sitemap.xml')) {
+      return { status: 200, body: '<!doctype html><html><body><h1>Not found</h1></body></html>' }
+    }
+    return { status: 200, body: URLSET }
+  }
+  const result = await crawlSitemap({
+    baseUrl: 'https://docs.spring.io',
+    keywords: ['spring', 'boot', 'configuration'],
+    limit: 2,
+    fetchRaw,
+  })
+  assert.equal(result.ok, true)
   assert.equal(seen.length, 2)
+  assert.deepEqual(seen, [
+    'https://docs.spring.io/sitemap.xml',
+    'https://docs.spring.io/sitemap_index.xml',
+  ])
+  assert.equal(result.sitemapUrl, 'https://docs.spring.io/sitemap_index.xml')
+  assert.equal(result.urls.length, 2)
+})
+
+test('crawlSitemap probes the hyphenated sitemap-index.xml last (0.6.4)', async () => {
+  const seen = []
+  const fetchRaw = async (url) => {
+    seen.push(url)
+    if (url === 'https://spring.io/sitemap-index.xml') return { status: 200, body: URLSET }
+    return { status: 404, body: '' }
+  }
+  const result = await crawlSitemap({
+    baseUrl: 'https://spring.io',
+    keywords: ['spring', 'boot', 'configuration'],
+    limit: 3,
+    fetchRaw,
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(seen, [
+    'https://spring.io/sitemap.xml',
+    'https://spring.io/sitemap_index.xml',
+    'https://spring.io/sitemap-index.xml',
+  ])
+  assert.equal(result.sitemapUrl, 'https://spring.io/sitemap-index.xml')
+  assert.equal(result.urls.length, 3)
+})
+
+test('callers can override the ordered path candidates', async () => {
+  const seen = []
+  const fetchRaw = async (url) => {
+    seen.push(url)
+    return { status: 404, body: '' }
+  }
+  const result = await crawlSitemap({
+    baseUrl: 'https://example.com',
+    keywords: ['x'],
+    paths: ['robots-then-sitemap.xml'],
+    fetchRaw,
+  })
+  assert.equal(result.ok, false)
+  assert.deepEqual(seen, ['https://example.com/robots-then-sitemap.xml'])
 })
 
 test('crawlSitemap never throws without a fetchRaw or a valid base URL', async () => {
@@ -109,15 +179,33 @@ test('crawlSitemap never throws without a fetchRaw or a valid base URL', async (
   assert.equal(invalid.reason, 'invalid baseUrl')
 })
 
-test('crawlSitemap reports a spent request budget when only the fallback index is found', async () => {
+test('an index found at the last candidate gets one extra request to expand', async () => {
+  // spring.io/sitemap-index.xml is itself a sitemapindex, so the three path
+  // probes are spent when it answers; the crawl must still be able to read the
+  // child map it points at.
+  const SPRING_INDEX = `<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>https://spring.io/sitemap-0.xml</loc></sitemap>
+</sitemapindex>`
   const seen = []
   const fetchRaw = async (url) => {
     seen.push(url)
-    if (url.endsWith('/sitemap.xml')) return { status: 404, body: '' }
-    return { status: 200, body: INDEX }
+    if (url === 'https://spring.io/sitemap-index.xml') return { status: 200, body: SPRING_INDEX }
+    if (url === 'https://spring.io/sitemap-0.xml') return { status: 200, body: URLSET }
+    return { status: 404, body: '' }
   }
-  const result = await crawlSitemap({ baseUrl: 'https://docs.spring.io', keywords: ['spring'], fetchRaw })
-  assert.equal(result.ok, false)
-  assert.match(result.reason, /request budget spent/)
-  assert.equal(seen.length, 2)
+  const result = await crawlSitemap({
+    baseUrl: 'https://spring.io',
+    keywords: ['spring', 'boot', 'configuration'],
+    limit: 2,
+    fetchRaw,
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(seen, [
+    'https://spring.io/sitemap.xml',
+    'https://spring.io/sitemap_index.xml',
+    'https://spring.io/sitemap-index.xml',
+    'https://spring.io/sitemap-0.xml',
+  ])
+  assert.equal(result.urls.length, 2)
 })
