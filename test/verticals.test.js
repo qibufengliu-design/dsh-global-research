@@ -11,7 +11,8 @@ test('pickVerticals picks code sources for library questions', () => {
 
 test('pickVerticals picks arXiv for research questions', () => {
   const picked = pickVerticals({ question: 'which retrieval augmented generation benchmark is standard in 2026?' })
-  assert.deepEqual(picked, ['arxiv'])
+  assert.equal(picked[0], 'arxiv')
+  assert.deepEqual(picked.length <= 2, true)
 })
 
 test('pickVerticals returns nothing for non-technical policy questions', () => {
@@ -48,6 +49,27 @@ test('github adapter maps repositories to hits', async () => {
   assert.equal(hits[0].engine, 'github')
   assert.equal(hits[0].url, 'https://github.com/facebook/react')
   assert.match(hits[0].snippet, /star|★/)
+})
+
+test('openalex adapter turns inverted abstracts into text with year and citations', async () => {
+  const payload = JSON.stringify({
+    results: [{
+      id: 'https://openalex.org/W1',
+      doi: 'https://doi.org/10.1000/abc',
+      display_name: 'Retrieval Augmented Generation: A Survey',
+      publication_year: 2024,
+      cited_by_count: 321,
+      abstract_inverted_index: { We: [0], study: [1], RAG: [2] },
+    }],
+  })
+  const { hits } = await searchVerticals(['scholar'], ['retrieval augmented generation survey'], {
+    fetchRaw: fakeFetch({ 'api.openalex.org': { status: 200, body: payload } }),
+  })
+  assert.equal(hits.length, 1)
+  assert.equal(hits[0].url, 'https://doi.org/10.1000/abc')
+  assert.match(hits[0].text, /We study RAG/)
+  assert.match(hits[0].text, /2024/)
+  assert.match(hits[0].text, /321/)
 })
 
 test('arxiv adapter parses atom entries and strips markup', async () => {

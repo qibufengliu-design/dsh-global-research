@@ -26,6 +26,11 @@ test('long Chinese questions are also cut into short query fragments', () => {
   assert.ok(queries.some((query) => query.length <= 12 && /[\u4e00-\u9fff]/.test(query)))
 })
 
+test('a Chinese question still yields an English query for Latin-only engines', () => {
+  const queries = buildQueries(['幂等重试'], [], 'Spring Boot 3 的幂等重试和事务边界怎么写', 8)
+  assert.ok(queries.some((query) => /spring boot/i.test(query) && !/[\u4e00-\u9fff]/.test(query)))
+})
+
 function cluster(claim, urls, stance = 'support') {
   const domains = new Set(urls.map((url) => new URL(url).hostname))
   const status = stance === 'support' && urls.length >= 2 && domains.size >= 2 ? 'confirmed' : 'unverified'
@@ -66,6 +71,11 @@ test('confidence reflects confirmed/disputed mix', () => {
     cluster('a', ['https://a.com', 'https://b.com']),
     cluster('b', ['https://a.com', 'https://b.com']),
     cluster('c', ['https://a.com', 'https://b.com']),
+  ]), 'medium') // three blogs agreeing is not "high": no primary-grade source
+  assert.equal(computeConfidence([
+    cluster('a', ['https://eur-lex.europa.eu/x', 'https://arxiv.org/abs/1']),
+    cluster('b', ['https://eur-lex.europa.eu/x', 'https://arxiv.org/abs/1']),
+    cluster('c', ['https://eur-lex.europa.eu/x', 'https://arxiv.org/abs/1']),
   ]), 'high')
   assert.equal(computeConfidence([
     cluster('a', ['https://a.com', 'https://b.com']),
