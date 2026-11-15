@@ -125,3 +125,26 @@ test('paid engines fall back to environment variables when config.keys is absent
     else process.env.SERPER_API_KEY = previous
   }
 })
+
+test('paid engine quota throws EngineUnavailable before the network call', async () => {
+  const calls = []
+  const engines = createEngines({
+    config: {
+      engines: { ctxWeb: false, ddgHtml: false, tavily: true },
+      keys: { tavily: 'tv-key' },
+      quotaPerMonth: { tavily: 2 },
+    },
+    fetchRaw: fakeFetch({ results: [{ url: 'https://a.com', title: 'A', content: 'c' }] }, calls),
+  })
+  assert.deepEqual(engines.quota, { tavily: 0, brave: 0, serper: 0, exa: 0 })
+  assert.equal(engines[0].name, 'tavily')
+  await engines[0].search('q1')
+  await engines[0].search('q2')
+  assert.equal(calls.length, 2)
+  await assert.rejects(
+    () => engines[0].search('q3'),
+    (error) => error instanceof EngineUnavailable && /quota exceeded/.test(error.message),
+  )
+  assert.equal(calls.length, 2, 'a throttled engine must not reach the network past its quota')
+  assert.equal(engines.quota.tavily, 3, 'the blocked attempt still counts')
+})

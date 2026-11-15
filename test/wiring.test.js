@@ -63,7 +63,7 @@ function fakeHarness() {
   }
   apply(ctx, {
     engines: { ddgHtml: false },
-    verticals: { github: false, arxiv: false, stackexchange: false, npm: false, hn: false, pypi: false },
+    verticals: { github: false, arxiv: false, stackexchange: false, npm: false, hn: false, pypi: false, docs: false },
     pageFetcher: 'auto',
     timeoutMs: 5000,
   })
@@ -188,7 +188,7 @@ test('cache can be disabled through config', async () => {
     tools: { register: (definition) => { registered[definition.name] = definition } },
   }, {
     engines: { ddgHtml: false },
-    verticals: { github: false, arxiv: false, stackexchange: false, npm: false, hn: false, pypi: false },
+    verticals: { github: false, arxiv: false, stackexchange: false, npm: false, hn: false, pypi: false, docs: false },
     pageFetcher: 'auto',
     timeoutMs: 5000,
     cache: { enabled: false },

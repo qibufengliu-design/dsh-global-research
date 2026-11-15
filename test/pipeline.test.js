@@ -137,6 +137,9 @@ test('a Stack Overflow answer is read from the API when the page itself is block
   const config = {
     ...baseConfig(),
     __fetchRaw: fetchRaw,
+    // Keep this test focused on the Stack Overflow API fallback: the docs
+    // vertical would otherwise outrank stackexchange for a React question.
+    verticals: { docs: false },
     __engines: [{ name: 'fake', available: () => true, search: async () => [] }],
     __fetchPage: async () => ({ ok: false, reason: 'HTTP 403' }),
   }
@@ -607,6 +610,17 @@ test('zero search results throws instead of fabricating', async () => {
     }),
     /所有搜索源/,
   )
+})
+
+test('stats carry the paid-engine quota counters when the engine list exposes them', async () => {
+  const engines = [fakeEngine(['https://nodejs.org/1', 'https://a.com/2'])]
+  engines.quota = { tavily: 1, brave: 0, serper: 0, exa: 0 }
+  const config = { ...baseConfig(), __engines: engines }
+  const result = await runResearch({
+    question: 'Node 22 是 LTS 吗', depth: 'quick', config,
+    llm: fakeLlm(defaultResponder), selection, logger: () => {},
+  })
+  assert.deepEqual(result.stats.engineQuota, { tavily: 1, brave: 0, serper: 0, exa: 0 })
 })
 
 test('zero evidence returns a partial low-confidence result', async () => {

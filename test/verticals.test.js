@@ -1,11 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { pickVerticals, searchVerticals, tagsFor } from '../lib/verticals.js'
+import { pickVerticals, searchVerticals, tagsFor, VERTICALS } from '../lib/verticals.js'
 
 test('pickVerticals picks code sources for library questions', () => {
   const picked = pickVerticals({ question: 'React 19 的 use() 和 useEffect 在数据获取上怎么选？' })
   assert.ok(picked.includes('github'))
-  assert.ok(picked.includes('stackexchange'))
+  // Official docs score 3, so MDN outranks Stack Overflow for a React question.
+  assert.ok(picked.includes('docs'))
   assert.ok(picked.length <= 2)
 })
 
@@ -187,5 +188,107 @@ test("pypi adapter reads the package page and the JSON description", async () =>
 test("pickVerticals picks pypi for pip/python package questions", () => {
   const picked = pickVerticals({ question: "pip install 装不上，python 包依赖冲突怎么排查" })
   assert.ok(picked.includes("pypi"), picked.join(","))
+})
+
+test('docs adapter maps MDN search documents to hits', async () => {
+  const calls = []
+  const fetchRaw = async (url, options = {}) => {
+    calls.push({ url, ...options })
+    return {
+      status: 200,
+      body: JSON.stringify({
+        documents: [
+          { mdn_url: '/en-US/docs/Web/API/AbortController', title: 'AbortController', summary: 'Lets you abort fetch requests.' },
+          { mdn_url: '/en-US/docs/Web/API/AbortSignal', title: 'AbortSignal', summary: 'A signal object used by AbortController.' },
+        ],
+      }),
+    }
+  }
+  const { hits } = await searchVerticals(['docs'], ['react useEffect cleanup abort fetch'], { fetchRaw })
+  assert.equal(hits.length, 2)
+  assert.equal(hits[0].engine, 'docs')
+  assert.equal(hits[0].url, 'https://developer.mozilla.org/en-US/docs/Web/API/AbortController')
+  assert.equal(hits[0].title, 'AbortController')
+  assert.match(hits[0].snippet, /abort fetch requests/)
+  assert.match(calls[0].url, /developer\.mozilla\.org\/api\/v1\/search\?q=react%20useEffect%20cleanup/)
+})
+
+test('docs adapter ignores questions outside its keyword set', async () => {
+  let calls = 0
+  const fetchRaw = async () => {
+    calls += 1
+    return { status: 200, body: '{}' }
+  }
+  const { hits } = await searchVerticals(['docs'], ['linux 内核调度策略'], { fetchRaw })
+  assert.deepEqual(hits, [])
+  assert.equal(calls, 0, 'unknown topics must not hit the network')
+})
+
+test('docs adapter returns fixed official references for Spring and Python', async () => {
+  const fetchRaw = async () => {
+    throw new Error('fixed docs must not use the network')
+  }
+  const spring = await searchVerticals(['docs'], ['spring boot actuator endpoint'], { fetchRaw })
+  assert.equal(spring.hits.length, 1)
+  assert.equal(spring.hits[0].url, 'https://docs.spring.io/spring-boot/docs/current/reference/htmlsingle/')
+  assert.equal(spring.hits[0].title, 'Spring Boot Reference Documentation')
+  assert.equal(spring.hits[0].snippet, '官方参考文档')
+  const python = await searchVerticals(['docs'], ['pandas groupby aggregation slow'], { fetchRaw })
+  assert.equal(python.hits.length, 1)
+  assert.equal(python.hits[0].url, 'https://docs.python.org/3/')
+  assert.equal(python.hits[0].title, 'Python 3 Documentation')
+  assert.equal(python.hits[0].snippet, '官方文档')
+})
+
+test('pickVerticals scores official docs as a first-class code source', () => {
+  assert.ok(pickVerticals({ question: 'React 19 的 use() 和 useEffect 在数据获取上怎么选？' }).includes('docs'))
+  assert.ok(pickVerticals({ question: 'spring boot 怎么配置 actuator 端点' }).includes('docs'))
+  assert.ok(pickVerticals({ question: 'pandas groupby 很慢怎么优化' }).includes('docs'))
+})
+
+test('github adapter falls back to code search when issues and repositories are empty', async () => {
+  const calls = []
+  const fetchRaw = async (url, options = {}) => {
+    calls.push({ url, ...options })
+    if (url.includes('/search/issues')) return { status: 200, body: JSON.stringify({ items: [] }) }
+    if (url.includes('/search/repositories')) return { status: 200, body: JSON.stringify({ items: [] }) }
+    if (url.includes('/search/code')) {
+      return {
+        status: 200,
+        body: JSON.stringify({
+          items: [{
+            html_url: 'https://github.com/vercel/next.js/blob/canary/packages/next/src/server/app-render.tsx',
+            repository: { full_name: 'vercel/next.js' },
+            path: 'packages/next/src/server/app-render.tsx',
+            text_matches: [{ fragment: 'const cache = new Map()' }, { fragment: 'return cache.get(key)' }],
+          }],
+        }),
+      }
+    }
+    return { status: 404, body: '' }
+  }
+  const { hits } = await searchVerticals(['github'], ['app renderer cache'], { fetchRaw })
+  assert.equal(hits.length, 1)
+  assert.equal(hits[0].engine, 'github')
+  assert.match(hits[0].title, /^vercel\/next\.js · packages\/next/)
+  assert.match(hits[0].snippet, /const cache = new Map/)
+  assert.match(hits[0].snippet, /return cache.get\(key\)/)
+  const codeCall = calls.find((call) => call.url.includes('/search/code'))
+  assert.ok(codeCall, 'code search must be requested')
+  assert.match(codeCall.url, /in:file/)
+  assert.match(codeCall.url, /per_page=5/)
+  assert.equal(codeCall.headers.accept, 'application/vnd.github.text-match+json')
+})
+
+test('github code search stays silent on 401/403 instead of throwing', async () => {
+  const calls = []
+  const fetchRaw = async (url) => {
+    calls.push(url)
+    if (url.includes('/search/code')) return { status: 401, body: JSON.stringify({ message: 'Requires authentication' }) }
+    return { status: 200, body: JSON.stringify({ items: [] }) }
+  }
+  const hits = await VERTICALS.github.search('private api usage pattern', { fetchRaw })
+  assert.deepEqual(hits, [])
+  assert.equal(calls.filter((url) => url.includes('/search/code')).length, 1)
 })
 

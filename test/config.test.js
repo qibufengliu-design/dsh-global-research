@@ -64,3 +64,12 @@ test('validateConfig normalizes domain lists from URLs and deduplicates', () => 
   assert.deepEqual(config.domainTrust.trusted, ['example.com', 'github.com'])
   assert.deepEqual(config.domainTrust.blocked, ['spam.example.org'])
 })
+
+test('validateConfig keeps per-engine quota overrides and enables the docs vertical', () => {
+  const { config, warnings } = validateConfig({ quotaPerMonth: { tavily: 500, brave: '1000', bad: -1, worse: 'many' } })
+  assert.equal(config.verticals.docs, true)
+  assert.deepEqual(config.quotaPerMonth, { tavily: 500, brave: 1000 })
+  assert.ok(warnings.some((warning) => /quotaPerMonth\.bad/.test(warning)))
+  assert.ok(warnings.some((warning) => /quotaPerMonth\.worse/.test(warning)))
+  assert.deepEqual(validateConfig({ quotaPerMonth: 'lots' }).config.quotaPerMonth, {})
+})
