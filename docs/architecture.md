@@ -122,6 +122,16 @@ research(question, depth, focus, mode, context, researchId, text, saveTo)
 - **价目页按 URL 直取**：`PRICING_SEEDS` 是 `{ pattern, url }` 映射（豆包/火山方舟 → `volcengine.com/docs/82379/1099320`、qwen/通义 → `help.aliyun.com/zh/model-studio/models`、deepseek → `api-docs.deepseek.com/quick_start/pricing`、kimi → `platform.moonshot.cn`、glm → `open.bigmodel.cn/pricing`），`pricingSeedFor()` 按选项取 URL。`targetedOptionRefill()` 在 pricing 场景先 `config.__fetchPage` 直取，正文命中 `hasPricingSeedText()`（`元|￥|$|/百万|1M|1000 tokens`）才作为证据页排到最前并视为该选项已解决；否则退回 `site:` 搜索。每个选项最多 1 次直取 + 1 次搜索。
 - **去重与预算**：`state.pages` / `state.refillPages` 已有的 URL 先入 `fetched` 集合，直取与搜索命中都跳过、不重复计页；本轮已经在 `sourceFailures` / `officialFetchFailures` 里失败过的 seed 不再重抓（`unreachable` 集合），避免同一轮为同一个 404 反复花预算。注意 `lib/strategies.js` 里的同名 `PRICING_SEEDS` 是给 direct 通道的 URL 列表，与这里的「选项 → 价目页」映射不是一回事。
 
+## 对比表列与类别（0.9.9）
+
+0.9.6 的「比价表完整性」默认每张对比表都有价格轴，于是判断题（C 题「微服务该不该拆」）也拿到一列「价格」，每行都写「未核实」——一个填不出来、却读起来像结论的列。0.9.9 起，列由问题类别决定，且溯源标记不许进标签列。
+
+- **三套列**：`lib/prompts.js` 的 `COMPARE_COLUMNS` / `compareColumnKind()` / `compareColumnsFor()` 是唯一来源——`pricing` → `方案 / 输入价 / 输出价 / 币种/口径 / 适用场景`；`tech-selection` / `architecture` / `decision` → `方案 / 优势 / 风险 / 适用场景 / 成本概览`；其余（`learning` / `evaluate` / 类别未知）→ `选项 / 优势 / 风险 / 适用条件`。`synthPrompt({ questionKind })` 用这套列表写提示词，同时按类别给出缺值写法（pricing 才允许「未核实（无来源）」；成本概览允许「未核实」，但不许编价格、不许另加价格列）与「候选多时保留哪两列」。类别由调用方传入，缺省走中性列。
+- **列不是硬编码的**：「N 个候选就是 N 行、每个候选独立一行、禁止并格」与类别无关，三种表头都保留；「价格」列在非 pricing 题里是错误，而不是缺省。
+- **交付前的清理**：`lib/brief.js` 的 `sanitizeCompareTable(brief, { questionKind })` 在 `buildResult()` 里 `applyZeroEvidenceOptions()` 之后、`checkCompareRows()` 之前跑（类别缺省读 `stats.questionKind`）。它只处理「## 方案对比」的第一张表：数据行标签列剥掉 `（无来源）`/`(无来源)`/`（零证据）`/`（推断）`；非数值单元格（不含数字）剥掉 `（无来源）`，含数字的格保留标记（数字溯源是 `markUnsourcedNumbers()` 的契约）；表头带「价格」（`价格|单价|报价|输入价|输出价|价目|pricing|price`，刻意不匹配裸「价」以免误伤「性价比」「评价」）且类别已知且不是 `pricing` 时，表头改成「成本概览」，把没有 `[S#]` 的纯数字价格格改成 `见注`（带引用的价格是证据、不是噪音，原样保留）——**行不删**，类别未知时保持原样。幂等：跑第二遍不再变化。
+- **`（无来源）` 不再从数字入口漏进标签列**：`markUnsourcedNumbers()` 只标注第 1 列之后的单元格。标签列是候选名，「先拆 2-3 个服务」里的 `2-3` 属于名字，不是待核算的数字；模型自己写进标签列的标记由 `sanitizeCompareTable()` 剥掉。
+- **识别边界**：`见注` 只替换「纯数字 + 单位」且没有引用的价格格（`0.2 元/百万 tokens`、`¥0.5`、`0.0008 元/千 tokens`）。区间价（`0.2-0.3 元`）、带后缀的口径（`0.2 元/秒`、`0.2 元/次`）、整段说明（`见官网，按量计费`）都不认作纯数字，原样保留；表头若叫「费用」「单价」也会被认成价格列，但「性价比」「评价」不会；表头写「价格」而表体语义上不是价格（例如「价格弹性」）会被误改；转置表（候选做列、维度做行）不处理，因为它的第一列是维度名而不是候选名；只处理「## 方案对比」下的第一张表。
+
 ## 冲突三分
 
 简报的「## 存在冲突」分三类，某一类为空时写 `- 无`，三类都空则整段不出现：

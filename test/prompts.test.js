@@ -21,6 +21,8 @@ function synthArgs() {
     sourceList: '[S1] https://api-docs.deepseek.com/quick_start/pricing',
     depth: 'standard',
     mode: 'compare',
+    // A price-difference question: the price columns are the ones under test.
+    questionKind: 'pricing',
   }
 }
 
@@ -117,4 +119,35 @@ test('synthesis prompt warns that uncited table numbers get a no-source label (0
   const prompt = synthPrompt(synthArgs())
   assert.ok(prompt.includes('数字列里每一行的数字后都要带 [S#]'), 'the per-row number rule is missing')
   assert.ok(prompt.includes('（无来源）'), 'the fallback label is not disclosed to the model')
+})
+
+// 0.9.9 — the compare table used to hardcode a 价格 column, so a judgement
+// question (微服务该不该拆) got 「未核实」 under 价格 on every row: a column that
+// cannot be filled but still reads as a finding. The columns now follow the kind.
+test('the compare table columns are chosen by the question kind (0.9.9)', () => {
+  const args = synthArgs()
+
+  const pricing = synthPrompt({ ...args, questionKind: 'pricing' })
+  assert.ok(pricing.includes('| 方案 | 输入价 | 输出价 | 币种/口径 | 适用场景 |'), 'the pricing header is missing')
+  assert.ok(pricing.includes('未核实（无来源）'), 'the pricing placeholder is missing')
+
+  for (const kind of ['tech-selection', 'architecture', 'decision']) {
+    const prompt = synthPrompt({ ...args, questionKind: kind })
+    assert.ok(prompt.includes('| 方案 | 优势 | 风险 | 适用场景 | 成本概览 |'), `the ${kind} header is missing`)
+    assert.ok(prompt.includes('不得为了填表编造价格或单价'), `the no-invented-price rule is missing for ${kind}`)
+    assert.ok(!prompt.includes('| 输入价 |'), `a price column leaked into ${kind}`)
+    assert.ok(!prompt.includes('| 价格 |'), `a 价格 column leaked into ${kind}`)
+  }
+
+  // learning / evaluate / a missing kind all fall back to the neutral columns.
+  for (const kind of ['learning', 'evaluate', 'concept', null, undefined]) {
+    const prompt = synthPrompt({ ...args, questionKind: kind })
+    assert.ok(prompt.includes('| 选项 | 优势 | 风险 | 适用条件 |'), `the generic header is missing for ${kind}`)
+    assert.ok(!prompt.includes('| 价格 |'), `a 价格 column leaked into ${String(kind)}`)
+  }
+
+  // The per-candidate row rule is independent of the columns.
+  assert.ok(synthPrompt({ ...args, questionKind: 'pricing' }).includes('每个候选必须独立一行'))
+  assert.ok(synthPrompt({ ...args, questionKind: 'tech-selection' }).includes('每个候选必须独立一行'))
+  assert.ok(synthPrompt({ ...args, questionKind: 'learning' }).includes('每个候选必须独立一行'))
 })

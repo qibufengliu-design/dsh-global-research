@@ -7,6 +7,28 @@
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-11-15
+
+> 起因是 0.9.7 的一道判断题（C 题「微服务该不该拆」）：它输出了「## 方案对比」，但表里带一列「价格」，每行都是「未核实」——这道题没有价格轴，那一列既填不出来、又读起来像一条结论；更糟的是第 3 行标签直接是「先拆 2-3 个服务（无来源）」，溯源标记漏进了标签列，候选名从此对不上任何选项。本版做两件事：**表列跟着问题类别走**，以及**溯源标记不许出现在标签列**。版本号仍写在 `package.json` 的 0.9.8，由发布 commit 统一 bump。
+
+### Added
+
+- **按类别定义对比表列**：`lib/prompts.js` 新导出 `COMPARE_COLUMNS`、`compareColumnKind(questionKind)`、`compareColumnsFor(questionKind)`。`pricing` → `| 方案 | 输入价 | 输出价 | 币种/口径 | 适用场景 |`；`tech-selection` / `architecture` / `decision` → `| 方案 | 优势 | 风险 | 适用场景 | 成本概览 |`（成本概览允许「未核实」，但不得编造价格或另加价格列）；其余（`learning` / `evaluate` / 未知）→ `| 选项 | 优势 | 风险 | 适用条件 |`。
+- **`synthPrompt()` 可选 `questionKind`**：表头、缺值写法和「候选多时保留哪两列」都按类别派生；不传时回落到中性列，不再默认出现「价格」列。「N 个候选就是 N 行、每个候选独立一行、禁止并格」的硬规则与类别无关，三种表头都保留。
+- **`sanitizeCompareTable(brief, { questionKind })`**：`lib/brief.js` 新导出（连同 `COST_OVERVIEW_HEADER`、`PRICE_SEE_NOTE`）。标签列剥掉 `（无来源）`/`(无来源)`/`（零证据）`/`（推断）`；非数值单元格（不含数字）剥掉 `（无来源）`，含数字的格保留标记；表头带「价格」且类别已知且不是 `pricing` 时，表头改成「成本概览」，没有 `[S#]` 的纯数字价格格改成「见注」（带引用的价格是证据，原样保留）——**不删行**，类别未知时保持原样。
+
+### Changed
+
+- **`buildResult()` 接收 `questionKind`**：在 `applyZeroEvidenceOptions()` 之后、`checkCompareRows()` 之前调用 `sanitizeCompareTable()`；参数缺省时读 `stats.questionKind`（`buildStats()` 本来就带了这一项，所以流水线侧无需改动）。
+- **`markUnsourcedNumbers()` 不再标注第一列**：标签列放的是候选名，「先拆 2-3 个服务」里的 `2-3` 是名字的一部分、不是待核算的数字；此前它被补上 `（无来源）`，正是泄漏进标签列的那条路径（模型自己写进标签列的标记由 `sanitizeCompareTable()` 剥掉）。
+- `docs/architecture.md` 增「对比表列与类别」小节，写清三套列、`见注` 的含义与识别边界。
+
+### Tests
+
+- `test/prompts.test.js` 9 → 10（+1）：三种表头各断言一次（pricing / tech-selection·architecture·decision / learning·evaluate·缺省），并断言非 pricing 提示词里不出现「价格」表头、每个候选独立一行的规则仍在。原有断言全部保留，`synthArgs()` 显式给了 `questionKind: 'pricing'`（题面本来就是价差题）。
+- `test/brief.test.js` 53 → 56（+3）：标签列与非数值格剥标记、数字格保留标记；非 pricing 题「价格」列改「成本概览」且不删行、`pricing` 与类别未知时不动列；幂等 + 经 `buildResult()` 的端到端清理。
+- `node scripts/test-all.mjs` 19 个文件全绿（本机沙箱内 `node --test` 无法 spawn，逐文件直接执行）。
+
 ## [0.9.8] - 2026-11-15
 
 > 起因是 0.9.7 的一次 standard 价格对比题：豆包 seed 页 `https://www.volcengine.com/docs/82379/1099320` 抓到了、进了参考（S5，官方），正文却「只有页头，无可提取明细」——零证据。根因是价格在表格里：`heuristicEvidence()` 要求段落 ≥120 字（官方页 60 字），而表格每行只有几十字，且 `htmlToText()` 把 `</tr>` 拍成一个换行、`<td>` 拍成一个空格，于是整张价目表被字数门槛整段丢掉。本版做的是「价目行也算证据」：短行只要带 token 单价，就逐行抽成 `pricing` 证据并断言成可核对的 claim。

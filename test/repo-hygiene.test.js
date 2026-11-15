@@ -7,10 +7,12 @@ import { fileURLToPath } from 'node:url'
 import {
   checkDocumentedCommands,
   checkJsonBlocks,
+  checkLeaks,
   checkRepository,
   checkToolParams,
   documentedCommands,
   documentedParams,
+  scanLeaks,
   toolParamNames,
 } from '../scripts/check-docs.mjs'
 import {
@@ -290,6 +292,43 @@ test('checkDocumentedCommands flags commands that no longer exist', () => {
       failures.some((line) => line.includes('文档里写到的 npm script 不存在：e2e')),
       failures.join('\n')
     )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('scanLeaks finds pasted tokens and local machine paths', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-leaks-'))
+  try {
+    // 拆开拼，避免这个测试文件自己变成泄露扫描的命中项
+    const fakeToken = ['ghp', 'A'.repeat(30)].join('_')
+    writeFileSync(join(dir, 'notes.md'), `token: ${fakeToken}\n见 D:\\Users\\someone\\work\n`)
+    writeFileSync(join(dir, 'clean.md'), '# 干净的文件\n')
+    const { scanned, findings } = scanLeaks(dir)
+    assert.equal(scanned, 2)
+    assert.ok(
+      findings.some((finding) => finding.file === 'notes.md' && finding.kind === 'GitHub classic token'),
+      JSON.stringify(findings)
+    )
+    assert.ok(
+      findings.some((finding) => finding.file === 'notes.md' && finding.kind.includes('本机绝对路径')),
+      JSON.stringify(findings)
+    )
+    assert.ok(!findings.some((finding) => finding.file === 'clean.md'), JSON.stringify(findings))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('checkLeaks passes a tree without secrets', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-noleak-'))
+  try {
+    writeFileSync(join(dir, 'README.md'), '# 标题\n\n`node scripts/test-all.mjs`\n')
+    const passes = []
+    const failures = []
+    checkLeaks(dir, { fail: (line) => failures.push(line), pass: (line) => passes.push(line) })
+    assert.deepEqual(failures, [])
+    assert.ok(passes.some((line) => line.includes('没有密钥或本机绝对路径')), passes.join('\n'))
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

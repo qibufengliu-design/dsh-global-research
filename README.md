@@ -1,6 +1,7 @@
 # dsh-global-research
 
 [![CI](https://github.com/qibufengliu-design/dsh-global-research/actions/workflows/ci.yml/badge.svg)](https://github.com/qibufengliu-design/dsh-global-research/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/qibufengliu-design/dsh-global-research/actions/workflows/codeql.yml/badge.svg)](https://github.com/qibufengliu-design/dsh-global-research/actions/workflows/codeql.yml)
 [![Release](https://img.shields.io/github/v/release/qibufengliu-design/dsh-global-research)](https://github.com/qibufengliu-design/dsh-global-research/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](package.json)
@@ -53,7 +54,7 @@
 本项目是 DSH bundle 插件，不发布到 npm，按「目录 + profile patch」安装：
 
 ```powershell
-plugin_manager install_bundle target: D:\Total\dsh-global-research
+plugin_manager install_bundle target: <本仓库所在目录>   # 例：D:\plugins\dsh-global-research
 ```
 
 装好后对当前 profile 的所有会话生效，新会话里模型能看到 `research` 工具。改动 host 侧代码后需要重载：

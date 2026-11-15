@@ -4,7 +4,7 @@
  *
  *   node scripts/check-docs.mjs
  *
- * 检查八件事：
+ * 检查九件事：
  *   1. 企业级仓库需要的文件都在（README / CHANGELOG / 社区文件 / docs / 模板）；
  *   2. README、docs/、CONTRIBUTING、SECURITY、HANDOFF 里的相对链接都能解析；
  *   3. CHANGELOG 有 [Unreleased] 段，且有与 package.json 版本一致的条目；
@@ -12,7 +12,8 @@
  *   5. Issue 表单（.github/ISSUE_TEMPLATE/*.yml）的必填键与 body 类型合法，否则 GitHub 会静默不显示模板；
  *   6. README 的参数表与 index.js 里 research 工具的 parameters 一致（新参数不写进 README 就是文档漂移）；
  *   7. Markdown 里标成 ```json 的示例都能解析（示例是给人复制去跑的，语法错等于没写）；
- *   8. 文档里写到的 `node scripts/*.mjs` 与 `npm run <script>` 都真实存在（脚本改名后文档没跟，用户照着跑就报错）。
+ *   8. 文档里写到的 `node scripts/*.mjs` 与 `npm run <script>` 都真实存在（脚本改名后文档没跟，用户照着跑就报错）；
+ *   9. 仓库里没有真密钥（GitHub/AWS/OpenAI 等 token、私有密钥块），也没有把本机绝对路径抄进文档。
  *
  * 任何一项不通过就以非零码退出并列出具体文件，方便在 CI 里一眼看出哪里不整齐。
  * `checkRepository()` 同时被 test/repo-hygiene.test.js 直接调用，测试不落盘、不起子进程。
@@ -41,6 +42,7 @@ const REQUIRED_FILES = [
   '.github/ISSUE_TEMPLATE/question.yml',
   '.github/ISSUE_TEMPLATE/config.yml',
   '.github/workflows/ci.yml',
+  '.github/workflows/codeql.yml',
   '.github/workflows/release.yml',
   'docs/architecture.md',
   'docs/configuration.md',
@@ -283,6 +285,80 @@ export function checkDocumentedCommands(root, report) {
   if (total && !problems.length) report.pass(`文档里写到的脚本命令 ${total} 条都存在`)
 }
 
+/** 贴进仓库就会变成事故的字符串：真密钥、私有密钥块、本机绝对路径。 */
+const SECRET_PATTERNS = [
+  { kind: 'GitHub classic token', pattern: /ghp_[A-Za-z0-9]{20,}/ },
+  { kind: 'GitHub fine-grained token', pattern: /github_pat_[A-Za-z0-9_]{20,}/ },
+  { kind: 'OpenAI 风格密钥', pattern: /sk-[A-Za-z0-9]{20,}/ },
+  { kind: 'AWS access key', pattern: /AKIA[0-9A-Z]{16}/ },
+  { kind: '私有密钥块', pattern: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/ },
+]
+
+const LEAK_SCAN_EXTENSIONS = new Set(['.js', '.cjs', '.mjs', '.json', '.md', '.ps1', '.sh', '.txt', '.yaml', '.yml'])
+const LEAK_SCAN_SKIP = new Set(['node_modules', '.git', '.cache', 'coverage'])
+// 文档里抄进自己的机器路径（盘符 + Users/Total），别人照着跑会找不到东西
+const LOCAL_PATH_PATTERN = /[A-Za-z]:\\(?:Users|Total)\\/
+// HANDOFF.md 是给「这台机器上的下一位维护者」的交接笔记，本机路径在那里是必要信息，
+// 其余面向读者的文档（README/docs/CONTRIBUTING）必须用相对路径或占位示例。
+const LOCAL_PATH_ALLOWED = new Set(['HANDOFF.md'])
+
+/**
+ * 扫一遍仓库里的文本文件，找真密钥与本机绝对路径。
+ * @param {string} root
+ * @returns {{ scanned: number, findings: { file: string, kind: string }[] }}
+ */
+export function scanLeaks(root) {
+  const findings = []
+  let scanned = 0
+
+  const walk = (dir) => {
+    let entries
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (LEAK_SCAN_SKIP.has(entry.name)) continue
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        walk(full)
+        continue
+      }
+      const ext = entry.name.slice(entry.name.lastIndexOf('.'))
+      if (!LEAK_SCAN_EXTENSIONS.has(ext)) continue
+      const rel = relative(root, full).replaceAll('\\', '/')
+      let body
+      try {
+        body = readFileSync(full, 'utf8')
+      } catch {
+        continue
+      }
+      scanned += 1
+      for (const { kind, pattern } of SECRET_PATTERNS) {
+        if (pattern.test(body)) findings.push({ file: rel, kind })
+      }
+      if (!LOCAL_PATH_ALLOWED.has(rel) && LOCAL_PATH_PATTERN.test(body)) {
+        findings.push({ file: rel, kind: '本机绝对路径（Windows 盘符 + Users/Total）' })
+      }
+    }
+  }
+
+  walk(root)
+  return { scanned, findings }
+}
+
+/**
+ * 第 9 项：仓库里不能有真密钥，也不能把本机绝对路径抄进文档。
+ * @param {string} root
+ * @param {{ fail: (m: string) => void, pass: (m: string) => void }} report
+ */
+export function checkLeaks(root, report) {
+  const { scanned, findings } = scanLeaks(root)
+  for (const finding of findings) report.fail(`疑似泄露（${finding.kind}）：${finding.file}`)
+  if (!findings.length) report.pass(`${scanned} 个文本文件没有密钥或本机绝对路径`)
+}
+
 /**
  * @param {string} [root] 仓库根目录
  * @returns {{ passes: string[], failures: string[] }}
@@ -400,6 +476,9 @@ export function checkRepository(root = DEFAULT_ROOT) {
 
   // 8. 文档里的脚本命令真实存在 ----------------------------------------------
   checkDocumentedCommands(root, { fail, pass })
+
+  // 9. 没有密钥、没有本机绝对路径 --------------------------------------------
+  checkLeaks(root, { fail, pass })
 
   return { passes, failures }
 }

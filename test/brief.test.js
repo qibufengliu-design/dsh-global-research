@@ -2,8 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ACTION_CHECKLIST_HEADING, appendConflictSection, appendReferences, appendRetrievalFlow, appendStats, applyZeroEvidenceOptions, assignSourceIds, buildResult,
-  checkCompareRows, computeConfidence, ensureSections, fallbackBrief, formatRetrievalFlow, gradeSource, markUnsourcedNumbers, missingSections, requiredSectionsFor,
-  UNSOURCED_NUMBER_MARK, validateCitations, zeroEvidenceGapText,
+  checkCompareRows, computeConfidence, COST_OVERVIEW_HEADER, ensureSections, fallbackBrief, formatRetrievalFlow, gradeSource, markUnsourcedNumbers, missingSections, PRICE_SEE_NOTE, requiredSectionsFor,
+  sanitizeCompareTable, UNSOURCED_NUMBER_MARK, validateCitations, zeroEvidenceGapText,
 } from '../lib/brief.js'
 import { findSelfContradictions } from '../lib/assertions.js'
 import { autoDepth, buildQueries, groupEvidence, resolveDepth, shortFragments } from '../lib/pipeline.js'
@@ -895,4 +895,92 @@ test('an uncited refill source is kept and labelled instead of dropped (0.9.6)',
   assert.doesNotMatch(rendered, /^- \[S1\] .*已检索，未被采用/m)
   // Without a refill hint nothing is retained — citation hygiene is unchanged.
   assert.equal(validateCitations('结论 [S1]', sources).sources.length, 1)
+})
+
+// 0.9.9 — two leaks reported on the 0.9.7 判断题 (微服务该不该拆): the label column
+// read 「先拆 2-3 个服务（无来源）」 (a provenance tag inside the candidate's name,
+// which also breaks candidate matching), and the table kept a 价格 column whose
+// every row said 未核实 (a column that cannot be filled but reads as a finding).
+const COMPARE_COLUMNS_5 = '| 方案 | 优势 | 风险 | 价格 | 适用场景 |'
+
+function cCaseTable() {
+  return [
+    '## 结论', '建议先拆 [S1]。', '',
+    '## 方案对比',
+    COMPARE_COLUMNS_5,
+    '| --- | --- | --- | --- | --- |',
+    '| 单体 | 简单 [S1] | 耦合 | 未核实 | 小团队 |',
+    '| 先拆 2-3 个服务（无来源） | 平衡 | 边界成本（推断） | 0.2 元/百万 tokens（无来源） | 成长期 |',
+    '| 全量微服务（零证据） | 弹性（无来源） | 运维复杂 (无来源) | 未核实（无来源） | 大团队 |',
+    '',
+    '## 置信度', 'medium',
+  ].join('\n')
+}
+
+test('provenance marks are stripped from the label column and non-numeric cells (0.9.9)', () => {
+  // `pricing` keeps its price column, so only the mark rules are under test here.
+  const out = sanitizeCompareTable(cCaseTable(), { questionKind: 'pricing' })
+
+  assert.match(out, /^\| 先拆 2-3 个服务 \| 平衡 \| 边界成本（推断） \| 0\.2 元\/百万 tokens（无来源） \| 成长期 \|$/m,
+    'the label column keeps its name, the numeric price cell keeps its provenance mark')
+  assert.match(out, /^\| 全量微服务 \| 弹性 \| 运维复杂 \| 未核实 \| 大团队 \|$/m,
+    '（零证据）/（无来源） must not survive in a label or a non-numeric cell')
+  assert.doesNotMatch(out.split('\n').filter((line) => line.startsWith('|')).map((line) => line.split('|')[1]).join(''), /（无来源）|（零证据）|（推断）/,
+    'no marker may remain in the label column')
+  // A numeric cell is the one place a provenance mark belongs.
+  assert.ok(out.includes('0.2 元/百万 tokens（无来源）'), 'a numeric cell keeps its （无来源） mark')
+  // The header row labels columns, so it is not stripped.
+  assert.ok(out.includes(COMPARE_COLUMNS_5), 'the header row changed')
+  // A brief with no compare table is returned verbatim.
+  assert.equal(sanitizeCompareTable('## 结论\n纯文字。', { questionKind: 'concept' }), '## 结论\n纯文字。')
+})
+
+test('a 价格 column on a non-pricing question becomes 成本概览 without dropping rows (0.9.9)', () => {
+  const out = sanitizeCompareTable(cCaseTable(), { questionKind: 'concept' })
+  assert.ok(out.includes(`| 方案 | 优势 | 风险 | ${COST_OVERVIEW_HEADER} | 适用场景 |`), 'the price header was not renamed')
+  assert.ok(!out.includes('| 价格 |'), 'the 价格 header survived')
+  // The bare-number price becomes 见注; the row itself stays (deleting it would
+  // hide the candidate), and 未核实 is a legitimate 成本概览 value.
+  assert.match(out, /^\| 先拆 2-3 个服务 \| 平衡 \| 边界成本（推断） \| 见注 \| 成长期 \|$/m, 'a numeric price cell must become 见注')
+  assert.match(out, /^\| 单体 \| 简单 \[S1\] \| 耦合 \| 未核实 \| 小团队 \|$/m, '未核实 survives under 成本概览')
+  assert.equal(out.split('\n').filter((line) => line.startsWith('| 全量微服务')).length, 1, 'no row may be dropped')
+  assert.equal(PRICE_SEE_NOTE, '见注')
+  // A price the brief can cite is a cost fact, not column noise: the [S#] stays.
+  const cited = cCaseTable().replace('0.2 元/百万 tokens（无来源）', '0.2 元/百万 tokens [S2]')
+  assert.ok(sanitizeCompareTable(cited, { questionKind: 'concept' }).includes('0.2 元/百万 tokens [S2]'),
+    'a cited price must survive the rename')
+
+  // architecture / decision / learning / evaluate behave the same: no price axis.
+  for (const kind of ['architecture', 'decision', 'learning', 'evaluate', 'tech-selection']) {
+    assert.ok(!sanitizeCompareTable(cCaseTable(), { questionKind: kind }).includes('| 价格 |'), `${kind} kept a 价格 column`)
+  }
+  // A pricing question keeps its price column exactly as written.
+  assert.ok(sanitizeCompareTable(cCaseTable(), { questionKind: 'pricing' }).includes('| 价格 |'), 'pricing lost its price column')
+  // Unknown kind: cannot judge, so the column is left alone (marks are still cleaned).
+  const unknown = sanitizeCompareTable(cCaseTable(), {})
+  assert.ok(unknown.includes('| 价格 |'), 'an unknown kind must leave the header alone')
+})
+
+test('sanitizeCompareTable is idempotent and runs before checkCompareRows in buildResult (0.9.9)', () => {
+  const once = sanitizeCompareTable(cCaseTable(), { questionKind: 'concept' })
+  assert.equal(sanitizeCompareTable(once, { questionKind: 'concept' }), once, 'a second pass must change nothing')
+  assert.equal(sanitizeCompareTable(cCaseTable(), { questionKind: 'pricing' }).includes(PRICE_SEE_NOTE), false, 'pricing must not produce 见注')
+
+  const result = buildResult({
+    brief: cCaseTable(), sources: [], confidence: 'medium', gaps: [], partial: false, depth: 'quick',
+    stats: { questionKind: 'concept', queries: 1, pagesFetched: 1, llmRounds: 1, elapsedMs: 5 },
+  })
+  // The delivered brief, not just the helper's return value, is clean.
+  assert.ok(result.brief.includes(`| 方案 | 优势 | 风险 | ${COST_OVERVIEW_HEADER} | 适用场景 |`), 'buildResult missed the column rename')
+  assert.match(result.brief, /^\| 先拆 2-3 个服务 \| 平衡 \| 边界成本（推断） \| 见注 \| 成长期 \|$/m)
+  const labelCells = result.brief.split('\n').filter((line) => line.startsWith('|')).map((line) => line.split('|')[1]).join('')
+  assert.doesNotMatch(labelCells, /（无来源）|（零证据）|（推断）/, 'a marker leaked back into the label column')
+
+  // A pricing question keeps its price column and still gets the number marks.
+  const priced = buildResult({
+    brief: cCaseTable(), sources: [], confidence: 'medium', gaps: [], partial: false, depth: 'quick',
+    stats: { questionKind: 'pricing', queries: 1, pagesFetched: 1, llmRounds: 1, elapsedMs: 5 },
+  })
+  assert.ok(priced.brief.includes('| 价格 |'), 'the pricing table lost its price column')
+  assert.ok(priced.brief.includes('0.2 元/百万 tokens（无来源）'), 'the uncited price lost its mark')
 })

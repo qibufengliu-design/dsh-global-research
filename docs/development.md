@@ -71,7 +71,7 @@ $env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
 - 断言：`queries >= 2`、`pagesFetched >= 1`、简报含 `## 参考` 与 `> 本次检索`、全程不抛错。
 - `E2E_VERBOSE=1` 可看到引擎失败、证据批次与卡住的环节。
 
-回归结论记录在 `D:\Total\docs\superpowers\specs\` 下（仓库外的工作笔记），发布前每个版本至少跑一次 A 题（RAG 选型）与一次 B/C 题。
+回归结论记录在**仓库外的工作笔记**里（本机习惯放在 `docs/superpowers/specs/` 同级的项目笔记目录，不进仓库），发布前每个版本至少跑一次 A 题（RAG 选型）与一次 B/C 题。
 
 ## 调试
 

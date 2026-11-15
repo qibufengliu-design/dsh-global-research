@@ -108,7 +108,7 @@ config:
 
 本项目是 DSH bundle 插件，不发布到 npm，按「目录 + profile patch」安装：
 
-1. 把本目录放到新机器的插件工作区（例如 `D:\Total\dsh-global-research`）。
+1. 把本目录放到新机器的插件工作区（例如 `D:\plugins\dsh-global-research`，路径随意，别放进 profile 目录里）。
 2. 在 profile 的 `cordis.patch.yml` 里加一段（`keys` 留空即可先用免费引擎）：
 
    ```yaml
