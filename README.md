@@ -194,3 +194,15 @@ Get-ChildItem test\*.test.js | ForEach-Object { node $_.FullName }
 - **P2（已完成）**：付费引擎 Tavily（真实 key 实测：检索层从"中文二手站为主"变为官方 release 表 / nodejs.org / GitHub 原始文件可命中；Brave 因注册需绑卡未启用）+ 垂直源 GitHub / arXiv / StackExchange / npm / HN（自动选择、失败隔离、API 正文兜底、排序后保留至少一个垂直源引用、统计行）。Stack Overflow 召回调优（2026-11-14）：只发拉丁词 query、纯中文跳过、全文无结果时回退 `intitle` 标题搜索，并把页面来源标进证据提示，最终冒烟里 SO 已进入「参考」并出现在依据第 5 条。
 - **P3（已完成 2026-11-14）**：`research-protocol` skill 随插件注册（何时调用、怎么读 confidence/gaps、深档何时开子代理）；缺口回补增强——当整轮证据没有任何一手/官方来源时，回补轮即使已有 4 个以上证据簇也会触发，并强制追加 `site:eur-lex.europa.eu` / `site:europa.eu`（法规类）、`site:npmjs.com`（包类）、`site:github.com`（仓库类）的确定性 query；回补抓到的页面若含官方链接（如政策页 → EUR-Lex ELI），会用剩余页预算继续下钻一层。Stack Overflow 召回再加"问题关键词→标签映射"（react-hooks / reactjs / python / node.js 等 30+ 规则），先按标签搜、无结果再退回无标签全文与 intitle。
 - **P4（已完成 2026-11-14）**：结果缓存（同问题 TTL 内复用简报，LRU 上限，`partial` 不入缓存，命中不调模型）、按域名的信任名单/黑名单配置（参与 `domainTrust` 与排序前过滤）、PyPI 垂直源直连、配置校验（`lib/config.js`：类型强转、越界夹取、未知键与非法枚举 warning）、UI 卡片（`client.js` 经 `tool.call.toolview` 注册 `research`：置信度徽章、来源数与耗时、结论摘要、展开全文；host 端 `render` 仍返回纯 Markdown 作回退）。
+
+## P5 新增能力（2026-11-15）
+
+- **时间敏感问题不缓存**：问题含「最新/现在/价格/EOL/latest/current/release」等词时跳过缓存；普通缓存命中会在简报首行提示「本结果来自 N 分钟前的缓存」。
+- **追问续跑**：`researchId` 复用上一轮已读页面与证据，只补新缺口（30 分钟内有效）；省略式追问建议同时带 `context`。
+- **过程可见**：简报末尾固定一行 `> 本次检索：N 个查询 · M 个页面 · K 条证据 · T 秒（档位）`，卡片解析成四个小徽章。
+- **结果导出**：`saveTo` 把简报写成 Markdown（含参考与统计行）；不传则不落盘。
+- **研究类型**：`mode: explain | compare | track | evaluate`，compare 强制对比表与适用条件，track 强制带日期的时间线，evaluate 输出约束→匹配度→风险。
+- **URL 直取**：问题里贴的 URL 会优先直接抓取，不再要求是官方域名。
+- **证据分级**：参考条目标注 官方 / 论文 / 仓库 / 论坛 / 百科 / 网页；`high` 置信度要求至少 2 个独立一手来源。
+- **论文源**：新增 OpenAlex 垂直源（免 key），命中带年份与被引次数。
+- **检索质量**：中文长问句额外切 ≤12 字片段做 query；planner 没给英文 query 时自动补拉丁词 query。
