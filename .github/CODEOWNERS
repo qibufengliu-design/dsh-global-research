@@ -1,0 +1,3 @@
+# 单一维护者仓库：任何改动都需要仓库主人的 review。
+# 分支保护（Require review / Require status checks）需在 GitHub 网页设置里开启一次，见 HANDOFF.md 的手工清单。
+* @qibufengliu-design

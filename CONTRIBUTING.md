@@ -19,10 +19,18 @@
 ```powershell
 git clone https://github.com/qibufengliu-design/dsh-global-research.git
 cd dsh-global-research
-node scripts/test-all.mjs      # 337 例应全绿
+node scripts/test-all.mjs      # 全部测试文件应全绿（总数以输出为准）
+node scripts/check-docs.mjs    # 仓库整洁性：必需文件、相对链接、CHANGELOG、零依赖
 ```
 
 本项目零依赖，不需要 `npm install`。
+
+提交前建议在仓库内配好作者身份（本机没有全局 git 身份时尤其如此，否则 `git tag -a` 会报 `Committer identity unknown`）：
+
+```powershell
+git config user.name  "qibufengliu-design"
+git config user.email "qibufengliu-design@users.noreply.github.com"
+```
 
 ## 开发流程
 
@@ -47,12 +55,15 @@ node scripts/test-all.mjs      # 337 例应全绿
 ## PR 检查表
 
 - [ ] `node scripts/test-all.mjs` 全绿
+- [ ] `node scripts/check-docs.mjs` 通过（相对链接、必需文件、CHANGELOG 条目、零依赖）
 - [ ] 新增行为有对应测试；修 bug 先补一条会失败的测试
 - [ ] `dependencies` / `devDependencies` 仍为空
 - [ ] `CHANGELOG.md` 已更新（用户可见变化写进 `Unreleased`）
 - [ ] 配置项变化同步了 `lib/config.js`、`docs/configuration.md`、`test/config.test.js`
 - [ ] 面向用户的文案是中文，示例可复制即跑
 - [ ] 没有提交密钥、`.env`、个人路径或抓包数据
+- [ ] 文档里没有写死「第 N 例测试」「当前 N 个测试」这类会过期的数字
+- [ ] 只打 annotated tag；已推送的 tag 不移动、不删除（见 [docs/release.md](docs/release.md)）
 
 ## 代码约定
 

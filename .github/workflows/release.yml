@@ -1,0 +1,74 @@
+name: Release
+
+# 打 tag 即发版：把 CHANGELOG.md 里该版本的条目做成 GitHub Release。
+# 历史 tag（v0.9.0–v0.9.4）可以用 workflow_dispatch 手动补建，不重打 tag。
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要创建（或补建）Release 的已推送 tag，例如 v0.9.4'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: publish ${{ inputs.tag || github.ref_name }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Resolve and verify tag
+        id: meta
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "tag $TAG 不存在"; exit 1; }
+          V=$(node -p "require('./package.json').version")
+          if [ "v$V" != "$TAG" ]; then
+            echo "tag $TAG 与 package.json 版本 v$V 不一致：发版前先把 package.json 升到 $TAG 去掉 v 的形式"
+            exit 1
+          fi
+          echo "tag $TAG 与 package.json 版本一致"
+
+      - name: Extract release notes from CHANGELOG.md
+        run: node scripts/release-notes.mjs "${{ steps.meta.outputs.tag }}" > "$RUNNER_TEMP/notes.md"
+
+      - name: Skip when the release already exists
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${{ steps.meta.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release ${{ steps.meta.outputs.tag }} 已存在，跳过"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.meta.outputs.tag }}" \
+            --title "${{ steps.meta.outputs.tag }}" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --verify-tag

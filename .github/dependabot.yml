@@ -1,20 +1,27 @@
 version: 2
+
+# 本仓库零运行时依赖，也不提交 lockfile，所以 Dependabot 只做两件事：
+#  1. 跟进 GitHub Actions 的版本（按周，聚成一个 PR，避免 PR 堆积）；
+#  2. 万一有人误引入 npm 依赖，按月提醒一次。
 updates:
   - package-ecosystem: github-actions
     directory: '/'
     schedule:
       interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns: ['*']
     commit-message:
       prefix: 'ci'
     labels:
       - dependencies
 
-  # 本项目零运行时依赖；保留此项只为捕获误引入的依赖
   - package-ecosystem: npm
     directory: '/'
     schedule:
       interval: monthly
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     commit-message:
       prefix: 'chore'
     labels:

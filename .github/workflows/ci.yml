@@ -23,10 +23,10 @@ jobs:
       matrix:
         node: ['20', '22', '24']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
 
@@ -34,8 +34,12 @@ jobs:
         run: |
           node -e "const p=require('./package.json');const d={...p.dependencies,...p.devDependencies};if(Object.keys(d).length){console.error('unexpected dependencies:',d);process.exit(1)}console.log('zero dependencies: ok')"
 
-      - name: Syntax check
-        run: node --check index.js client.js
+      - name: Syntax check (every source file)
+        run: |
+          set -euo pipefail
+          files=$(find . -path ./node_modules -prune -o \( -name '*.js' -o -name '*.mjs' \) -print)
+          for file in $files; do node --check "$file"; done
+          echo "syntax: ok ($(echo "$files" | wc -l | tr -d ' ') files)"
 
       - name: Test (file by file)
         run: node scripts/test-all.mjs
@@ -44,18 +48,12 @@ jobs:
     name: docs & metadata
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Check required files
-        run: |
-          for f in README.md CHANGELOG.md CONTRIBUTING.md CODE_OF_CONDUCT.md SECURITY.md LICENSE \
-                   docs/architecture.md docs/configuration.md docs/development.md docs/release.md; do
-            test -f "$f" || { echo "missing $f"; exit 1; }
-          done
-          echo "required files: ok"
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
 
-      - name: Check version consistency
-        run: |
-          V=$(node -p "require('./package.json').version")
-          grep -q "## \[$V\]" CHANGELOG.md || { echo "CHANGELOG.md missing entry for $V"; exit 1; }
-          echo "version $V: ok"
+      - name: Repository hygiene (files, links, CHANGELOG, package metadata)
+        run: node scripts/check-docs.mjs
