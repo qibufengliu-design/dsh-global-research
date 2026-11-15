@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../index.js'
 
-function fakeHarness() {
+function fakeHarness(overrides = {}) {
   const registered = {}
   const web = {
     async search({ query }) {
@@ -28,11 +28,12 @@ function fakeHarness() {
       }
     },
   }
-  const calls = { llm: 0 }
+  const calls = { llm: 0, prompts: [] }
   const llm = {
     stream(options) {
       calls.llm += 1
       const prompt = options.messages?.[0]?.content?.[0]?.text ?? ''
+      calls.prompts.push(prompt)
       let text = '{}'
       if (prompt.includes('<untrusted>')) {
         text = JSON.stringify([
@@ -66,6 +67,7 @@ function fakeHarness() {
     verticals: { github: false, arxiv: false, stackexchange: false, npm: false, hn: false, pypi: false, docs: false },
     pageFetcher: 'auto',
     timeoutMs: 5000,
+    ...overrides,
   })
   return { registered, skills, calls }
 }
@@ -228,4 +230,26 @@ test('an unknown researchId falls back to a fresh run instead of failing', async
   const result = await registered.research.execute({ question: 'Node 22 支持到什么时候', depth: 'quick', researchId: 'rs_deadbeefdeadbeef' }, {})
   assert.equal(result.stats.resumed, false)
   assert.ok(result.brief.length > 0)
+})
+
+test('material saved in the settings page is used when the call omits text (0.9.3)', async () => {
+  const { registered, calls } = fakeHarness({ material: '内部材料：我们已决定使用 Node 22。' })
+  const result = await registered.research.execute(
+    { question: 'Node 22 还是 24？我们的服务该跑在哪个版本上', depth: 'quick' },
+    { agent: { id: 'material-agent' } },
+  )
+  assert.ok(calls.prompts.some((prompt) => prompt.includes('内部材料：我们已决定使用 Node 22。')), 'the stored material must reach the model')
+  // The material is registered as a fake `user-provided` page; whether the model
+  // cites it is up to the model, so only the provenance note is asserted here.
+  assert.match(result.brief, /材料来源：设置页的「研究材料」/)
+})
+
+test('an explicit text argument wins over the stored material (0.9.3)', async () => {
+  const { registered, calls } = fakeHarness({ material: 'SETTINGS-MATERIAL-MARKER' })
+  await registered.research.execute(
+    { question: 'Node 22 还是 24？这个决定该怎么定', depth: 'quick', text: 'ARGUMENT-TEXT-MARKER：团队已选定 Node 22。' },
+    { agent: { id: 'material-agent' } },
+  )
+  assert.ok(calls.prompts.some((prompt) => prompt.includes('ARGUMENT-TEXT-MARKER')), 'the argument text must reach the model')
+  assert.ok(!calls.prompts.some((prompt) => prompt.includes('SETTINGS-MATERIAL-MARKER')), 'the stored material must not leak in')
 })

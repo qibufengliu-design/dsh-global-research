@@ -7,6 +7,24 @@
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-11-15
+
+### Added
+
+- **研究材料粘贴区（`text` 的 UI 入口）**：此前 `text` 只能由模型在调用时传参，人在界面上没有入口。设置页新增「研究材料」`textarea`（新配置键 `material`，≤20000 字，超限截断并提示），保存后每次 `research` 调用自动把原文当最高优先级证据；简报末尾追加「材料来源：设置页的「研究材料」（N 字）。它只在本次调用里当证据用；清空设置后不再自动带上」；显式 `text` 仍优先，调用日志会标明来源。
+- 输入框右侧多一枚「材料 N 字」胶囊（仅存在材料时出现），点击复制设置路径；设置页 summary 显示「默认深度：X · 材料 N 字」。
+- `lib/config.js` 新增 `asMaterial(value, fallback, warnings)`（非字符串回落默认、trim、超限截断 + warning）与 `MATERIAL_MAX_CHARS = 20000`；`lib/schema.js` 增 `material` 字段（设置页可直接改）。
+
+### Changed
+
+- 修正文档里「深度胶囊是只读提示」的过期说法（0.9.1 起胶囊已可直接切换档位、启停插件），`README.md` 与 `docs/configuration.md` 同步更新。
+
+### Tests
+
+- `test/config.test.js` +1：`material` 默认空串、trim、纯空白视为未设置、20050 字截成 20000 并 warning、非字符串回落默认。
+- `test/card.test.js` +4：summary 显示材料字数；粘贴→「草稿 N 字」→「保存材料」写入 `[{ op: 'set', path: ['material'], value }]` 且带 revision；「清空」写入空串；composer 在 settings 含材料时渲染「材料 N 字」胶囊（`createHooks()` 新增 `runEffects()` 以执行记录下来的 effect）。
+- `test/wiring.test.js`：`fakeHarness()` 支持覆盖 config、记录每次给模型的 prompt；+2 用例——未传 `text` 时设置里的材料进入 prompt 且简报带来源提示，显式 `text` 覆盖材料时 prompt 里只有传参内容。测试总数 337 → 344。
+
 ## [0.9.2] - 2026-11-15
 
 ### Added

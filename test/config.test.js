@@ -50,6 +50,26 @@ test('validateConfig clamps unsafe values instead of failing the tool', () => {
   assert.ok(warnings.length >= 3)
 })
 
+test('validateConfig keeps pasted material trimmed and capped (0.9.3)', () => {
+  assert.equal(DEFAULT_CONFIG.material, '')
+  assert.equal(validateConfig({}).config.material, '')
+
+  const { config, warnings } = validateConfig({ material: '  我们的服务跑在 Node 22 上。  ' })
+  assert.equal(config.material, '我们的服务跑在 Node 22 上。')
+  assert.deepEqual(warnings, [])
+
+  const blank = validateConfig({ material: '   \n  ' })
+  assert.equal(blank.config.material, '', 'whitespace-only material is off')
+
+  const huge = validateConfig({ material: 'x'.repeat(20050) })
+  assert.equal(huge.config.material.length, 20000, 'long material is truncated, not dropped')
+  assert.ok(huge.warnings.some((warning) => /material/.test(warning)))
+
+  const bad = validateConfig({ material: 42 })
+  assert.equal(bad.config.material, '')
+  assert.ok(bad.warnings.some((warning) => /material/.test(warning)))
+})
+
 test('validateConfig reports invalid enums and unknown keys as warnings', () => {
   const { config, warnings } = validateConfig({
     depthDefault: 'thorough',

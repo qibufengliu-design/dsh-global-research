@@ -546,8 +546,12 @@ window.__ModuleLoader__.load({
       const [note, setNote] = React.useState('')
       const [error, setError] = React.useState('')
       const [busy, setBusy] = React.useState(false)
+      // 0.9.3 — the paste box keeps a local draft so typing never fires a write
+      // per keystroke; only 保存 sends it to the settings store.
+      const [draft, setDraft] = React.useState(typeof value.material === 'string' ? value.material : '')
 
-      const summary = `默认深度：${DEPTH_LABELS[value.depthDefault] || DEPTH_LABELS.auto}`
+      const materialChars = typeof value.material === 'string' ? value.material.length : 0
+      const summary = `默认深度：${DEPTH_LABELS[value.depthDefault] || DEPTH_LABELS.auto}${materialChars ? ` · 材料 ${materialChars} 字` : ''}`
       if (props.view === 'summary') {
         return h('span', null, form ? summary : '默认深度：自动（配置页未就绪）')
       }
@@ -609,6 +613,35 @@ window.__ModuleLoader__.load({
       ),
       h('div', { style: { color: CAPTION, lineHeight: 1.6 } },
         '关闭插件后模型看不到 research 工具，其余设置保留。'),
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 } },
+        h('span', { style: { fontWeight: 600 } }, '研究材料（可选）'),
+        h('span', { style: { color: CAPTION } }, `粘贴原文 ≤20000 字 · 草稿 ${draft.length} 字`)),
+      h('textarea', {
+        value: draft,
+        rows: 6,
+        placeholder: '把 PDF 摘要、内部文档、合同条款等原文粘贴到这里。下一次 research 调用会自动把它当作最高优先级证据（不下载、不解析，原文直接喂给模型）。模型自己带了 text 参数时以模型为准。',
+        onChange: (event) => setDraft(String(event?.target?.value ?? '').slice(0, 20000)),
+        style: {
+          width: '100%', boxSizing: 'border-box', resize: 'vertical', minHeight: 96,
+          font: MONO, fontSize: 12, lineHeight: 1.6, color: 'inherit',
+          background: 'transparent', border: BORDER, borderRadius: 8, padding: '8px 10px',
+        },
+      }),
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+        h('button', {
+          type: 'button',
+          disabled: busy || !draft.trim() || draft.trim() === (value.material || ''),
+          onClick: () => write('material', draft.trim()),
+          style: chip(false),
+        }, '保存材料'),
+        h('button', {
+          type: 'button',
+          disabled: busy || (!draft && !materialChars),
+          onClick: () => { setDraft(''); write('material', '') },
+          style: chip(false),
+        }, '清空'),
+        h('span', { style: { color: CAPTION, lineHeight: 1.6 } },
+          materialChars ? `已保存 ${materialChars} 字，下次 research 自动带上。` : '当前没有保存材料。')),
       note ? h('div', { style: { color: '#2f9e6e' } }, note) : null,
       error ? h('div', { style: { color: '#c0504d' } }, error) : null,
       )
@@ -624,7 +657,7 @@ window.__ModuleLoader__.load({
       const NAMESPACE = 'global-research'
       const CYCLE = ['auto', 'quick', 'standard', 'deep']
       return function ComposerControl() {
-        const [state, setState] = React.useState({ status: 'loading', depth: 'auto', enabled: true, revision: undefined, error: '' })
+        const [state, setState] = React.useState({ status: 'loading', depth: 'auto', enabled: true, materialChars: 0, revision: undefined, error: '' })
         const [busy, setBusy] = React.useState(false)
 
         const settings = () => {
@@ -675,6 +708,8 @@ window.__ModuleLoader__.load({
               status: 'ready',
               depth: String(user.depthDefault || 'auto'),
               enabled: user.enabled !== false,
+              // 0.9.3 — a chip only appears when the settings page holds material.
+              materialChars: typeof user.material === 'string' ? user.material.trim().length : 0,
               revision: row.revision,
               error: '',
             })
@@ -746,6 +781,16 @@ window.__ModuleLoader__.load({
               color: state.enabled ? CAPTION : '#c0504d',
             },
           }, state.status === 'loading' ? '研究 …' : state.enabled ? '研究 开' : '研究 关'),
+          state.materialChars > 0 ? h('button', {
+            type: 'button',
+            title: `设置页已保存 ${state.materialChars} 字研究材料：下一次 research 调用会自动把它当作最高优先级证据。点击复制设置路径。`,
+            onClick: () => {
+              const path = '设置 → 插件 → 全球研究 → 包含的组件 → 研究材料'
+              const clipboard = typeof navigator !== 'undefined' && navigator.clipboard
+              if (clipboard && typeof clipboard.writeText === 'function') clipboard.writeText(path).catch(() => {})
+            },
+            style: chipStyle,
+          }, `材料 ${state.materialChars} 字`) : null,
         )
       }
     }

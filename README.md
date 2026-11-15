@@ -92,7 +92,7 @@ plugin_manager set_plugin target: include:global-research enabled: true
 | `context` | 否 | 追问上一轮结果时，把被指代的内容附进来（≤2000 字）。research 看不到对话历史；带 `context` 的调用不走缓存 |
 | `researchId` | 否 | 上一轮返回的会话 id（简报末尾 `> 研究会话：rs_…`）。传回即续跑：复用已读页面与证据，只补新缺口，通常快 2–3 倍；30 分钟内有效 |
 | `mode` | 否 | `explain` / `compare` / `track` / `evaluate`；不传则按问题推定。`compare` 强制对比表与适用条件 |
-| `text` | 否 | 用户提供的资料（≤20000 字），作为最高优先级证据参与分析，不落盘 |
+| `text` | 否 | 用户提供的资料（≤20000 字），作为最高优先级证据参与分析，不落盘。也可以先在插件设置页的「研究材料」粘贴区保存一份，下次调用自动带上；显式 `text` 优先 |
 | `saveTo` | 否 | 把简报写成 Markdown 文件（含参考与统计行）；不传则不落盘 |
 
 ## 预算
@@ -124,6 +124,7 @@ plugin_manager set_plugin target: include:global-research enabled: true
 | key | 默认 | 说明 |
 |---|---|---|
 | `depthDefault` | `auto` | 未传 `depth` 时的档位，插件设置页可改，即时生效 |
+| `material` | `''` | 设置页「研究材料」粘贴区保存的原文（≤20000 字）；每次 research 自动作为最高优先级证据，显式 `text` 优先 |
 | `maxDeepPerSession` | `5` | 每个 agent 的 `deep` 次数上限 |
 | `engines.*` | ctxWeb / ddgHtml 开 | 付费引擎 `tavily` / `brave` / `serper` / `exa` 关闭，开启后读 `keys` 或环境变量 |
 | `pageFetcher` | `raw` | 正文抓取路径：`raw` / `web` / `auto` |
@@ -142,7 +143,7 @@ plugin_manager set_plugin target: include:global-research enabled: true
 
 Web 端不再是通用工具行，而是一张卡片：置信度徽章（高/中/低）、来源数、耗时、结论前三行、阶段耗时 chip，可展开完整简报。非 Web 端或卡片未注册时回退为纯 Markdown。
 
-插件设置页可改默认深度并启停插件；输入框右侧的「深度」胶囊是只读提示（点击复制设置路径）。
+插件设置页可改默认深度、启停插件，并有一个「研究材料」粘贴区（把公司内部文档、合同条款、接口说明贴进去，≤20000 字，下次调用自动当最高优先级证据）。输入框右侧的胶囊可直接操作：点「深度」切换 `auto → quick → standard → deep`，点「研究」启停；保存过材料时多一枚「材料 N 字」胶囊（点击复制设置路径）。
 
 ## 可靠性
 

@@ -232,8 +232,15 @@ export function apply(ctx, rawConfig = {}) {
       // 0.6.0 — user-supplied material. Capped here so neither the prompt nor
       // the cache key can be blown up; it also enters the key so two different
       // texts never share a cached brief.
-      const userText = typeof args?.text === 'string' ? args.text.trim() : ''
+      // 0.9.3 — material can also come from the settings page (the paste box),
+      // because the model may not know what the user attached. An explicit
+      // `text` argument always wins; the stored copy is only a fallback.
+      const argumentText = typeof args?.text === 'string' ? args.text.trim() : ''
+      const storedMaterial = typeof config.material === 'string' ? config.material.trim() : ''
+      const userText = argumentText || storedMaterial
+      const textSource = argumentText ? 'argument' : storedMaterial ? 'material' : ''
       if (userText.length > 20000) throw new Error('text 过长（上限 20000 字），请精简后重试。')
+      if (textSource === 'material') logger(`research uses ${userText.length} chars of material from settings`)
       const researchId = typeof args?.researchId === 'string' ? args.researchId.trim() : ''
       const resume = researchId ? sessions.get(researchId) : null
       if (researchId && !resume) logger(`research session ${researchId} not found or expired; running fresh`)
@@ -309,6 +316,9 @@ export function apply(ctx, rawConfig = {}) {
       // per-call numbers, and partial runs may be missing evidence.
       // Store only runs that produced evidence: an empty session would make the
       // next follow-up "reuse" nothing but still claim a resume happened.
+      if (textSource === 'material') {
+        result.brief += `\n\n> 材料来源：设置页的「研究材料」（${userText.length} 字）。它只在本次调用里当证据用；清空设置后不再自动带上。`
+      }
       if (nextSession && (nextSession.pages?.length ?? 0) > 0) {
         result.researchId = sessions.create(nextSession)
         // The model only sees the rendered brief, so the id has to be in it;

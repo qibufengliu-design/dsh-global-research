@@ -20,6 +20,7 @@
 |---|---|---|
 | `depthDefault` | `auto` | 未传 `depth` 时的档位；插件设置页里可改，改动即时生效（volatile） |
 | `maxDeepPerSession` | `5` | 每 agent 的 `deep` 次数上限 |
+| `material` | `''` | 设置页「研究材料」粘贴区保存的原文（≤20000 字）。每次 `research` 调用自动把它当最高优先级证据（不落盘、不进缓存 key）；显式传 `text` 时以 `text` 为准 |
 | `engines.ctxWeb` | `true` | 复用 Harness 的 `ctx.web.search` |
 | `engines.ddgHtml` | `true` | DuckDuckGo HTML 端点，零 key（本机实测常被 challenge 页拦截） |
 | `engines.tavily` / `brave` / `serper` / `exa` | `false` | 开启后读取 `config.keys.<name>` 或环境变量 |
@@ -98,7 +99,8 @@ config:
 插件列表里点开 `@local/dsh-global-research` 这一行：
 
 - **默认深度**：`自动 / 快速 / 标准 / 深度` 四个圆角按钮，点选即保存。该字段声明为 volatile，宿主原地更新配置、不重启插件，下一次 `research` 调用就按新档位走。
-- **输入框右侧的「深度」胶囊是只读提示**：显示当前默认档位，点击只是把设置路径复制到剪贴板——宿主没有向插件 client 半开放写配置的通道，改档请回到设置页。
+- **研究材料（可选）**：一个 `textarea` 粘贴区，保存原文（≤20000 字，超限截断并提示）。保存后每次 `research` 调用自动把它当最高优先级证据，简报末尾会写「材料来源：设置页的「研究材料」」；模型显式传 `text` 时以 `text` 为准。「清空」按钮立即移除。适合贴公司内部文档、合同条款、接口说明这类检索不到的材料。
+- **输入框右侧的胶囊可直接操作**：点「深度」循环切换 `auto → quick → standard → deep`，点「研究」启停插件（写的是同一份配置，需要宿主暴露 settings 通道；不可用时回退成只读提示「深度：设置页」）。保存过材料时多一枚「材料 N 字」胶囊，点击把设置路径复制到剪贴板。
 - **启用 / 停用**：用行右侧的插件总开关（等价于 `pluginManager.setPluginEnabled`）；关闭后重新加载插件，工具不出现在模型工具表里，其余配置保留。
 - 改配置页不需要重启；但**页面本身**（含客户端卡片）只在桌面应用启动时加载，`Ctrl+R` 不会重载，需要用菜单「应用 → 重新加载」或关掉窗口重开。
 

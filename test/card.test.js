@@ -54,7 +54,16 @@ function createHooks() {
     return paint()
   }
 
-  return { React, mount, current: () => tree }
+  return {
+    React,
+    mount,
+    current: () => tree,
+    /** Run the effects recorded by the last paint (the stub never auto-runs them). */
+    runEffects() {
+      const pending = effects.splice(0)
+      for (const effect of pending) effect()
+    },
+  }
 }
 
 function loadModule(extra = {}) {
@@ -350,6 +359,13 @@ function nodeWithText(tree, text) {
   return found
 }
 
+/** First node of a given element type (textarea, input, …). */
+function nodeOfType(tree, type) {
+  let found
+  walk(tree, (node) => { if (!found && node.type === type) found = node })
+  return found
+}
+
 /** Replace a global for one test and hand back the undo step. */
 function stubGlobal(name, value) {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, name)
@@ -414,6 +430,73 @@ test('config panel explains when the host exposes no config form', () => {
   const Panel = loadPanel()
   const json = JSON.stringify(Panel({ view: 'page', form: undefined }))
   assert.match(json, /配置页暂不可用/)
+})
+
+/* ------------------------------------------------------------------ */
+/* paste box for research material (0.9.3)                            */
+/* ------------------------------------------------------------------ */
+
+function mountPanel(value = {}, revision = 7) {
+  const registered = loadModule()
+  const Panel = registered.get('@local/dsh-global-research#global-research')
+  const stub = formStub(value, revision)
+  const view = () => registered.hooks.mount(Panel, { view: 'page', form: stub.form })
+  return { ...stub, view, tree: () => registered.hooks.current(), hooks: registered.hooks }
+}
+
+test('config panel summary shows how much material is saved (0.9.3)', () => {
+  const Panel = loadPanel()
+  const { form } = formStub({ depthDefault: 'auto', enabled: true, material: '一段内部材料' })
+  const json = JSON.stringify(Panel({ view: 'summary', form }))
+  assert.match(json, /材料 \d+ 字/)
+})
+
+test('config panel saves pasted material through form.mutate (0.9.3)', async () => {
+  const panel = mountPanel()
+  panel.view()
+  const textarea = nodeOfType(panel.tree(), 'textarea')
+  assert.ok(textarea, 'expected a paste box')
+  textarea.props.onChange({ target: { value: '  合同约定赔偿上限 30%  ' } })
+  assert.match(JSON.stringify(panel.tree()), /草稿 \d+ 字/)
+  const save = buttonLabelled(panel.tree(), '保存材料')
+  assert.ok(save, 'expected the 保存材料 button')
+  assert.equal(save.props.disabled, false, 'a dirty draft can be saved')
+  save.props.onClick()
+  await tick()
+  assert.deepEqual(panel.calls[0], {
+    ops: [{ op: 'set', path: ['material'], value: '合同约定赔偿上限 30%' }],
+    expectedRevision: 7,
+  })
+})
+
+test('config panel clears saved material through form.mutate (0.9.3)', async () => {
+  const panel = mountPanel({ depthDefault: 'auto', enabled: true, material: '旧材料' })
+  panel.view()
+  const clear = buttonLabelled(panel.tree(), '清空')
+  assert.ok(clear, 'expected the 清空 button')
+  assert.equal(clear.props.disabled, false)
+  clear.props.onClick()
+  await tick()
+  assert.deepEqual(panel.calls[0].ops, [{ op: 'set', path: ['material'], value: '' }])
+})
+
+test('composer control shows a material chip when the settings hold material (0.9.3)', async () => {
+  const remote = {
+    settings: {
+      describe: async () => ({
+        ok: true,
+        value: { namespaces: [{ ns: 'global-research', revision: 3, user: { depthDefault: 'auto', enabled: true, material: '内部材料' } }] },
+      }),
+      mutate: async () => ({ ok: true }),
+    },
+  }
+  const registered = loadModule({ remote })
+  const Control = registered.get('global-research-depth')
+  const view = () => registered.hooks.mount(Control, {})
+  view()
+  registered.hooks.runEffects()
+  await tick()
+  assert.match(JSON.stringify(registered.hooks.current()), /材料 \d+ 字/)
 })
 
 /* ------------------------------------------------------------------ */
