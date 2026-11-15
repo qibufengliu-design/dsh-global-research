@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { runResearch, groupEvidence, looksLikeFollowUp, extractEvidence, pickDocBases, compareOptions, countOptionHits, evidenceSiteKey, officialBackstopQueries, PRICING_HOSTS, pricingHostFor, pricingHostOfUrl, pricingTargetQueries, isPricingEvidencePage, isPricingScenario } from '../lib/pipeline.js'
+import { runResearch, groupEvidence, looksLikeFollowUp, extractEvidence, pickDocBases, compareOptions, countOptionHits, evidenceSiteKey, officialBackstopQueries, PRICING_HOSTS, PRICING_SEEDS, pricingHostFor, pricingHostOfUrl, pricingSeedFor, hasPricingSeedText, pricingTargetQueries, isPricingEvidencePage, isPricingScenario } from '../lib/pipeline.js'
 import { downgradeConfidence } from '../lib/brief.js'
 import { resolveStrategy } from '../lib/strategy.js'
 import { dedupeHits, rankHits } from '../lib/util.js'
@@ -1500,7 +1500,12 @@ test('an option with no evidence is called out instead of silently dropped (0.7.
   assert.ok(!result.gaps.some((gap) => gap.includes('选项「pnpm」')), JSON.stringify(result.gaps))
   assert.match(result.brief, /^\| bun \| 无证据 \| 无证据 \| 无证据 \|$/m)
   assert.match(result.brief, /^\| pnpm \| 安装快 \[S\d\]/m, 'the evidenced rows keep their citations')
-  assert.match(result.brief, /## 未解决[\s\S]*选项「bun」在本轮证据中没有可用来源/)
+  // 0.9.7 — bun owns a placeholder row, so the gap must say that instead of
+  // "not compared": the table does list it, only the evidence is missing. The
+  // 优势/风险 table has no price column, so the wording stays price-neutral.
+  assert.match(result.brief, /## 未解决[\s\S]*选项「bun」在对比表中占位，但未取得可用证据（零证据）/)
+  assert.doesNotMatch(result.brief, /选项「bun」在本轮证据中没有可用来源/)
+  assert.ok(!result.brief.includes('价格未取得'), 'a non-price table must not claim a missing price')
 })
 
 // 0.8.1 — the tail segment of a compare question carries the verb phrase
@@ -1787,10 +1792,138 @@ test('a directed retry that finds nothing keeps the gap and says it was tried (0
   const gap = result.gaps.find((item) => item.includes('选项「豆包」'))
   assert.ok(gap, JSON.stringify(result.gaps))
   assert.match(gap, /已定向检索 1 次仍未获证/)
-  assert.match(result.brief, /选项「豆包」在本轮证据中没有可用来源/)
+  // 0.9.7 — the compare table already carries an independent 豆包 row with 无证据
+  // cells, so the gap says "listed but unpriced" instead of "not compared".
+  assert.match(result.brief, /选项「豆包」在对比表中占位，但价格未取得（零证据）/)
+  assert.doesNotMatch(result.brief, /选项「豆包」在本轮证据中没有可用来源/)
+  assert.match(gap, /在对比表中占位，但价格未取得（零证据）/)
   assert.deepEqual(result.stats.targetedRefill, { optionsTried: 1, pagesFetched: 0, optionsResolved: 0, skipped: null })
   assert.match(result.brief, /定向回补 1 项（解决 0）/)
   assert.ok(!result.brief.includes('定向回补跳过'), result.brief)
+})
+
+/**
+ * 0.9.7 — the retry opens the vendor's price page by URL before searching.
+ *
+ * The reported 0.9.6 run's `site:volcengine.com` query returned an article page
+ * and a model list, so the page budget was spent on pages that never state a
+ * price and 豆包 stayed 无证据. The seed URL is known, so the retry fetches it
+ * directly and skips the search entirely when it carries a price.
+ *
+ * The strategy here declares no Step 2b seeds on purpose: this test is about the
+ * refill path, and a direct channel would already have read the same URL.
+ */
+function pricingStrategyWithoutSeeds() {
+  const base = resolveStrategy({ questionKind: 'pricing', depth: 'standard', question: DOUBAO_QUESTION })
+  return { ...base, sources: { ...base.sources, officialSeeds: [] }, sourcePlan: { channels: [] } }
+}
+
+test('a pricing retry fetches the vendor price page directly instead of searching (0.9.7)', async () => {
+  const queries = []
+  const fetched = []
+  const baseFetch = priceFetcher()
+  const config = baseConfig()
+  config.__engines = [optionAwareEngine(queries)]
+  config.__fetchPage = async (url) => {
+    fetched.push(url)
+    if (url === DEAD_DOUBAO_SEED) {
+      return {
+        url, finalUrl: url, title: '豆包大模型 API 价格', domain: 'www.volcengine.com', text: DOUBAO_TEXT, ok: true,
+      }
+    }
+    return baseFetch(url)
+  }
+  const result = await runResearch({
+    question: DOUBAO_QUESTION,
+    depth: 'standard',
+    mode: 'compare',
+    strategy: pricingStrategyWithoutSeeds(),
+    config,
+    llm: fakeLlm(doubaoPriceResponder),
+    selection,
+    logger: () => {},
+  })
+  // The canonical price URL was opened exactly once, and it is the page the
+  // brief cites — not an article the search happened to rank.
+  assert.equal(fetched.filter((url) => url === DEAD_DOUBAO_SEED).length, 1, JSON.stringify(fetched))
+  assert.ok(result.sources.some((source) => source.url === DEAD_DOUBAO_SEED), JSON.stringify(result.sources))
+  // The seed page is the option's whole retry: no directed query is spent on an
+  // option that is already covered.
+  assert.ok(!queries.includes(DOUBAO_DIRECTED_QUERY), JSON.stringify(queries))
+  assert.ok(!result.gaps.some((gap) => gap.includes('选项「豆包」')), JSON.stringify(result.gaps))
+  assert.ok(result.stats.targetedRefill.optionsResolved >= 1, JSON.stringify(result.stats.targetedRefill))
+  assert.equal(result.stats.targetedRefill.optionsTried, 1)
+  assert.match(result.brief, /定向回补 1 项（解决 1）/)
+})
+
+test('a pricing seed that is still dead falls back to the directed search (0.9.7)', async () => {
+  const queries = []
+  const fetched = []
+  const config = baseConfig()
+  config.__engines = [optionAwareEngine(queries)]
+  // The seed 404s even on the direct path, so the search below has to run.
+  config.__fetchPage = doubaoPriceFetcher(fetched)
+  const result = await runResearch({
+    question: DOUBAO_QUESTION,
+    depth: 'standard',
+    mode: 'compare',
+    strategy: pricingStrategyWithoutSeeds(),
+    config,
+    llm: fakeLlm(doubaoPriceResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.equal(fetched.filter((url) => url === DEAD_DOUBAO_SEED).length, 1, JSON.stringify(fetched))
+  assert.equal(queries.filter((query) => query === DOUBAO_DIRECTED_QUERY).length, 1, JSON.stringify(queries))
+  // The failed seed does not count as a fetched page; the search result does.
+  assert.equal(result.stats.targetedRefill.pagesFetched, 1, JSON.stringify(result.stats.targetedRefill))
+  assert.equal(result.stats.targetedRefill.optionsResolved, 1, JSON.stringify(result.stats.targetedRefill))
+  assert.ok(result.sources.some((source) => source.url === DOUBAO_URL), JSON.stringify(result.sources))
+})
+
+test('the retry does not re-fetch a price page the run already read (0.9.7)', async () => {
+  const queries = []
+  const fetched = []
+  const baseFetch = priceFetcher()
+  const config = baseConfig()
+  config.__engines = [optionAwareEngine(queries)]
+  config.__fetchPage = async (url) => {
+    fetched.push(url)
+    // Step 2b reads the canonical seed, but this page never names 豆包 — which is
+    // how an option ends up with zero evidence while its price page is "read".
+    if (url === DEAD_DOUBAO_SEED) {
+      return {
+        url,
+        finalUrl: url,
+        title: '火山引擎文档 · 计费说明',
+        domain: 'www.volcengine.com',
+        text: '火山引擎文档说明：各模型的计费口径、结算周期与查询入口均以控制台展示为准，本文只介绍文档索引结构与常见问题，具体条目请查阅对应模型详情页。',
+        ok: true,
+      }
+    }
+    if (String(url).includes('volcengine')) {
+      return {
+        url, finalUrl: url, title: '豆包大模型 API 价格', domain: 'www.volcengine.com', text: DOUBAO_TEXT, ok: true,
+      }
+    }
+    return baseFetch(url)
+  }
+  const result = await runResearch({
+    question: DOUBAO_QUESTION,
+    depth: 'standard',
+    mode: 'compare',
+    strategy: resolveStrategy({ questionKind: 'pricing', depth: 'standard', question: DOUBAO_QUESTION }),
+    config,
+    llm: fakeLlm(doubaoPriceResponder),
+    selection,
+    logger: () => {},
+  })
+  // One read of the seed URL for the whole run: the refill recognised it in the
+  // page set and went straight to the search instead of spending a second slot.
+  assert.equal(fetched.filter((url) => url === DEAD_DOUBAO_SEED).length, 1, JSON.stringify(fetched))
+  assert.equal(queries.filter((query) => query === DOUBAO_DIRECTED_QUERY).length, 1, JSON.stringify(queries))
+  assert.equal(result.stats.targetedRefill.pagesFetched, 1, JSON.stringify(result.stats.targetedRefill))
+  assert.ok(result.sources.some((source) => source.url === DOUBAO_URL), JSON.stringify(result.sources))
 })
 
 // 0.9.3 — the reserve is what makes this test possible: with a wide candidate
@@ -2472,4 +2605,37 @@ test('a vendor page that prints 元/百万 tokens is recognised as the price pag
   }), false)
   // A price on an unknown host is not first-party pricing either.
   assert.equal(isPricingEvidencePage({ url: 'https://blog.example.com/x', text: '0.8 元/百万 tokens' }), false)
+})
+
+test('every pricing host has a canonical price URL to open directly (0.9.7)', () => {
+  // data, not behaviour: one {pattern, url} per vendor, matched by the same
+  // patterns PRICING_HOSTS uses, so host and seed can never drift apart.
+  assert.equal(PRICING_SEEDS.length, 5)
+  for (const entry of PRICING_SEEDS) {
+    assert.ok(entry.pattern instanceof RegExp, JSON.stringify(entry))
+    assert.match(entry.url, /^https:\/\//, JSON.stringify(entry))
+    assert.ok(Object.isFrozen(entry) || typeof entry === 'object', JSON.stringify(entry))
+  }
+  assert.equal(pricingSeedFor('豆包'), 'https://www.volcengine.com/docs/82379/1099320')
+  assert.equal(pricingSeedFor('火山方舟'), 'https://www.volcengine.com/docs/82379/1099320')
+  assert.equal(pricingSeedFor('Qwen'), 'https://help.aliyun.com/zh/model-studio/models')
+  assert.equal(pricingSeedFor('deepseek'), 'https://api-docs.deepseek.com/quick_start/pricing')
+  assert.equal(pricingSeedFor('Kimi'), 'https://platform.moonshot.cn')
+  assert.equal(pricingSeedFor('GLM-4'), 'https://open.bigmodel.cn/pricing')
+  assert.equal(pricingSeedFor('some-unknown-vendor'), '')
+  assert.equal(pricingSeedFor(''), '')
+  assert.equal(pricingSeedFor(null), '')
+  // The host and the seed must agree, or the refill opens one vendor's page for
+  // another vendor's option.
+  for (const option of ['豆包', 'qwen', 'deepseek', 'kimi', 'glm']) {
+    const seed = pricingSeedFor(option)
+    assert.ok(seed.includes(pricingHostFor(option)) || pricingHostOfUrl(seed) === pricingHostFor(option), seed)
+  }
+  // What counts as "this page states a price": the unit matters, not the vendor.
+  assert.equal(hasPricingSeedText('输入价约 0.8 元/百万 tokens'), true)
+  assert.equal(hasPricingSeedText('$0.5 per 1M input tokens'), true)
+  assert.equal(hasPricingSeedText('每 1000 tokens 收费 0.002 元'), true)
+  assert.equal(hasPricingSeedText('火山方舟提供模型推理、微调与部署能力'), false)
+  assert.equal(hasPricingSeedText(''), false)
+  assert.equal(hasPricingSeedText(null), false)
 })

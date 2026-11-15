@@ -7,6 +7,28 @@
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-11-15
+
+> 起因是 0.9.6 的一次 standard 价格对比题（87s/low）暴露的两处真实不一致：①表格已经正常（qwen / 豆包 / deepseek 三行独立，豆包行在但价格写 `无证据`），「## 未解决」却仍写「选项「豆包」在本轮证据中没有可用来源（零证据），未纳入对比」——同一份简报自相矛盾；②定向回补「解决 0」：抓到的两条 volcengine 页是 `volcengine.com/article/…` 与 `ai.volcengine.com/model`，都不是价目页，而已知价目页 `https://www.volcengine.com/docs/82379/1099320` 从未被优先抓取。本版做的是「文案跟表格对齐 + 价目页直接按 URL 取」。
+
+### Added
+
+- **价目页索引**：`lib/pipeline.js` 新导出 `PRICING_SEEDS`（`{ pattern, url }` 表）：`豆包|doubao|火山方舟` → `https://www.volcengine.com/docs/82379/1099320`、`qwen|通义|千问` → `https://help.aliyun.com/zh/model-studio/models`、`deepseek` → `https://api-docs.deepseek.com/quick_start/pricing`、`kimi|moonshot` → `https://platform.moonshot.cn`、`glm|智谱|chatglm` → `https://open.bigmodel.cn/pricing`；配套 `pricingSeedFor(option)` 与 `hasPricingSeedText(text)`（正文命中 `元|￥|$|/百万|1M|1000 tokens` 才算价目页）。
+- **gap 文案的三种形态**：`lib/brief.js` 新导出 `ZERO_EVIDENCE_ROW_TEXT` / `ZERO_EVIDENCE_ROW_GENERIC_TEXT`，`zeroEvidenceGapText(option, { hasRow, priceTable })` 按「是否独立成行 + 是否价格表」选词：价格表 `在对比表中占位，但价格未取得（零证据）`；非价格表 `在对比表中占位，但未取得可用证据（零证据）`；无行仍是旧的「未纳入对比」。
+
+### Changed
+
+- **定向回补先直取价目页**：pricing 场景下 `targetedOptionRefill()` 先用 `config.__fetchPage` 打开该选项对应的 `PRICING_SEEDS` URL（占 1 个页预算），正文有价格特征就作为证据页插到最前、并跳过该选项的 `site:` 搜索（一条 seed = 该选项这一轮的整次重试）；404 / 不可读 / 正文无价格特征才回落到 `pricingTargetQueries()` 的检索。每选项仍是 1 seed + 1 query 上限。
+- **不重复花预算**：seed 与搜索命中的 URL 先按 `canonicalKey` 跟 `state.pages` / `state.refillPages` 比对，已读过的不再抓取、不重复计页；本轮已失败过的 URL（`state.sourceFailures` / `state.officialFetchFailures`，典型是 Step 2b 已经 404 的 seed）也不再重试——同样的请求几秒后不会有不同结果，只会多花一个页预算和一次抓取超时。
+- **文案在 `buildResult()` 收口**：比价表在合成之后才存在，所以 pipeline 的零证据 gap 仍按旧措辞生成（0.9.2 的 `（已定向检索 1 次仍未获证）` 等后缀照旧追加），由 `buildResult()` 在 `checkCompareRows` 之后用 `sink.owned` / `sink.priceTable` 改写为「占位」措辞——`realignZeroEvidenceGapText()` 同时处理 `brief` 与结果里的 `gaps`，`zeroEvidenceGapText()` 不传参时行为不变。
+- **价格表识别看单位不只看表头**：`checkCompareRows()` 现在还会扫描整张表是否出现价格单位（`元/￥/$/百万/tokens/price/...`）——`| 方案 | 输入价 | 备注 |` 这类表头不含 `价格|单价|费用|成本|报价` 的比价表也能被识别为价格表，否则「价格未取得」会被误写成通用措辞。
+
+### Tests
+
+- `test/pipeline.test.js` +4：价目页索引与「什么算价目页正文」；seed 直取命中（seed URL 进 `sources`、`targetedRefill.optionsResolved >= 1`、不再发 `site:` 检索）；seed 仍 404 时回落检索（失败的 seed 不计 `pagesFetched`）；本轮已读过的价目页不会被重抓（同一 URL 全程只取 1 次）。
+- `test/brief.test.js`：零证据三种措辞（价格表 / 非价格表 / 无行）断言。
+- 测试总数 372（19 个测试文件，本版新增 4 例），`node scripts/test-all.mjs` 全绿。
+
 ## [0.9.6] - 2026-11-15
 
 > 起因是 0.9.5 的一次 standard 价格对比题（148s）暴露的两个真实回归：①「定向回补 1 项（解决 1）」确实跑了，但解决的不是豆包——`volcengine.com` 的定价页被读取、又被引用校验剔除，豆包单价仍缺；②「## 方案对比」只剩 deepseek-flash / deepseek-v4-pro 两行 + 一条合并行「qwen / 豆包 API」（价格列「未核实」、无 `[S#]`），候选被并格吞掉。本版做的是「表完整性校验 + 定向检索打准 + 别再把补到的页丢掉」。

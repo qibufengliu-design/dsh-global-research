@@ -114,6 +114,14 @@ research(question, depth, focus, mode, context, researchId, text, saveTo)
 - **引用校验只对回补页放宽**：`validateCitations(brief, sources, { refillUrls, maxKept = 2 })` 不再无条件丢弃未被引用的来源；属于定向回补页的保留最多 2 条，并在「参考」标「（已检索，未被采用）」。`adoptedSources` / `adoptedUrls` / `officialAdopted` 仍只统计真正被引用的（`citedOnly`），采用率不会被虚高。
 - **比价表完整性**：`checkCompareRows(brief, { options, stats })` 解析「## 方案对比」第一张表，按候选逐个确认是否**独立成行**。被并格（如 `qwen / 豆包 API`）的候选在表后补「> 注意：<候选> 未作为独立行出现（价格未取得），下表结论不含该候选。」；独立成行但价格列是 `未核实 / 未知 / —` 的补「（无来源）」。结果写 `stats.compareRowsComplete`。合成提示词同时加硬规则：每个候选必须独立一行，禁止用 `/`、`、`、`与`、`和` 合并候选。
 
+## 零证据文案与价目页直取（0.9.7）
+
+0.9.6 的真实 standard 价格题暴露了两处不一致：表里已经给豆包留了独立行（价格 `无证据`），「## 未解决」却仍写「未纳入对比」；定向回补抓到的两条 volcengine 页是文章页与模型页，已知价目页从未被优先抓。
+
+- **文案在表格之后定稿**：`checkCompareRows()` 的 sink 增 `owned`（真正独立成行的候选）与 `priceTable`（表体含 `元|￥|$|百万|1M|tokens|price` 等即认，不只认列名——`输入价` 不匹配 `PRICE_COLUMN`）。`buildResult()` 在表格生成后调 `zeroEvidenceGapText(option, { hasRow, priceTable })`：有行且是价目表 → 「选项「X」在对比表中占位，但价格未取得（零证据）」；有行但不是价目表 → 「…但未取得可用证据（零证据）」；没有行 → 仍是「在本轮证据中没有可用来源（零证据），未纳入对比」。pipeline 阶段先写入的 gap 由 `realignZeroEvidenceGapText()` 就地重写，保留「（已定向检索 1 次仍未获证）」这类后缀，简报与 `gaps` 两个出口同步。
+- **价目页按 URL 直取**：`PRICING_SEEDS` 是 `{ pattern, url }` 映射（豆包/火山方舟 → `volcengine.com/docs/82379/1099320`、qwen/通义 → `help.aliyun.com/zh/model-studio/models`、deepseek → `api-docs.deepseek.com/quick_start/pricing`、kimi → `platform.moonshot.cn`、glm → `open.bigmodel.cn/pricing`），`pricingSeedFor()` 按选项取 URL。`targetedOptionRefill()` 在 pricing 场景先 `config.__fetchPage` 直取，正文命中 `hasPricingSeedText()`（`元|￥|$|/百万|1M|1000 tokens`）才作为证据页排到最前并视为该选项已解决；否则退回 `site:` 搜索。每个选项最多 1 次直取 + 1 次搜索。
+- **去重与预算**：`state.pages` / `state.refillPages` 已有的 URL 先入 `fetched` 集合，直取与搜索命中都跳过、不重复计页；本轮已经在 `sourceFailures` / `officialFetchFailures` 里失败过的 seed 不再重抓（`unreachable` 集合），避免同一轮为同一个 404 反复花预算。注意 `lib/strategies.js` 里的同名 `PRICING_SEEDS` 是给 direct 通道的 URL 列表，与这里的「选项 → 价目页」映射不是一回事。
+
 ## 冲突三分
 
 简报的「## 存在冲突」分三类，某一类为空时写 `- 无`，三类都空则整段不出现：

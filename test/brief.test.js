@@ -685,6 +685,18 @@ test('a zero-evidence option is marked 无证据 in the comparison table (0.7.1)
   // No table at all: a bullet carries the fact, no table is invented.
   assert.match(applyZeroEvidenceOptions('## 方案对比\n不适用\n\n## 置信度\nlow', ['bun']), /- 「bun」：无证据/)
   assert.match(zeroEvidenceGapText('bun'), /^选项「bun」在本轮证据中没有可用来源（零证据），未纳入对比$/)
+
+  // 0.9.7 — an option that owns a placeholder row is listed, not omitted, and a
+  // price table says which fact is missing. Default (no row) stays unchanged.
+  assert.equal(zeroEvidenceGapText('豆包', { hasRow: true }), '选项「豆包」在对比表中占位，但价格未取得（零证据）')
+  assert.equal(
+    zeroEvidenceGapText('豆包', { hasRow: true, priceTable: true }),
+    '选项「豆包」在对比表中占位，但价格未取得（零证据）',
+  )
+  assert.equal(
+    zeroEvidenceGapText('bun', { hasRow: true, priceTable: false }),
+    '选项「bun」在对比表中占位，但未取得可用证据（零证据）',
+  )
 })
 
 test('a brief without an action checklist gets the 无 placeholder (0.9.0)', () => {
