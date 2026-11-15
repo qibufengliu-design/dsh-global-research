@@ -146,6 +146,10 @@ Web 端不再是通用工具行，而是一张卡片：置信度徽章（高/中
 
 插件设置页可改默认深度、启停插件，并有一个「研究材料」粘贴区（把公司内部文档、合同条款、接口说明贴进去，≤20000 字，下次调用自动当最高优先级证据）。输入框右侧的胶囊可直接操作：点「深度」切换 `auto → quick → standard → deep`，点「研究」启停；保存过材料时多一枚「材料 N 字」胶囊（点击复制设置路径）。
 
+![插件设置页](docs/screenshots/02-settings.png)
+
+![输入框旁的胶囊](docs/screenshots/03-composer.png)
+
 ## 可靠性
 
 - 网页正文包在 `<untrusted>` 里，system prompt 禁止执行其中指令（降低提示注入风险）。
@@ -197,6 +201,9 @@ node scripts/check-release.mjs  # 发布一致性：版本号、CHANGELOG 小节
 | [docs/development.md](docs/development.md) | 本地环境、测试、真实网络回归、调试与排错 |
 | [docs/release.md](docs/release.md) | 版本号规则、发布清单、推送环境要求 |
 | [CHANGELOG.md](CHANGELOG.md) | 每个版本改了什么 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 开发环境、提交规范、PR 检查表 |
+| [SECURITY.md](SECURITY.md) | 支持版本、漏洞报告方式与响应时间 |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 社区行为准则 |
 
 ## 许可证
 
