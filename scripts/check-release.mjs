@@ -65,6 +65,16 @@ export function releaseSections(markdown) {
   return sections;
 }
 
+/** 语义化版本比较：a>b 返回 1，a<b 返回 -1，相等返回 0（只比较 x.y.z 数字段）。 */
+export function compareVersions(a, b) {
+  const pa = String(a || '').split('.').map(Number);
+  const pb = String(b || '').split('.').map(Number);
+  for (let i = 0; i < 3; i += 1) {
+    if (pa[i] !== pb[i]) return pa[i] > pb[i] ? 1 : -1;
+  }
+  return 0;
+}
+
 /** 检索自检脚本里导出的 VERSION（与 package.json 版本必须一致）。 */
 export function parseRetrievalVersion(source) {
   const match = String(source || '').match(/export\s+const\s+VERSION\s*=\s*(['"])([^'"]+)\1/)
@@ -164,10 +174,19 @@ export function checkRelease(root = DEFAULT_ROOT) {
     passes.push(`CHANGELOG 版本小节按新到旧排列（${sectionVersions.length} 条）`);
   }
   if (version && sectionVersions.length > 0) {
-    if (sectionVersions[0] !== version) {
+    const top = sectionVersions[0];
+    const cmp = compareVersions(top, version);
+    if (cmp < 0) {
       failures.push(
-        `CHANGELOG 最上面的版本小节是 ${sectionVersions[0]}，但 package.json 是 ${version}` +
-          '（发版时先写新小节，别让上一版留在最上面）'
+        `CHANGELOG 最上面的版本小节是 ${top}，比 package.json 的 ${version} 旧` +
+          '（版本号涨了但没写新小节：发版时先写 `## [新版本]`，再同步 package.json）'
+      );
+    } else if (cmp > 0) {
+      // 正常的发版节奏是「功能提交先写新小节，发布提交再同步版本号」，
+      // 这一小段时间里最上面的小节比 package.json 新，不是错误，但要提醒收口。
+      notes.push(
+        `CHANGELOG 最上面已是待发布小节 ${top}，package.json 还是 ${version}` +
+          `（发布提交里把 package.json / retrieval-check VERSION 同步成 ${top}）`
       );
     } else {
       passes.push(`CHANGELOG 最上面的小节就是当前版本 ${version}`);

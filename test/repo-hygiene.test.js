@@ -21,6 +21,7 @@ import {
   checkRelease,
   parseDepthProfiles,
   parseReadmeBudgets,
+  compareVersions,
   parseRetrievalVersion,
   releaseSections,
   staleTestCounts,
@@ -448,20 +449,44 @@ function makeReleaseFixture({ version = '1.2.3', changelog, retrievalVersion } =
   return dir
 }
 
-test('checkRelease flags a CHANGELOG that is one version behind package.json', () => {
+test('checkRelease allows a pre-written next-version section during release prep', () => {
   const dir = makeReleaseFixture({
     version: '1.2.3',
     changelog: ['# Changelog', '', '## [Unreleased]', '', '## [1.2.4] - 2026-03-03', '', '- 新', '', '## [1.2.3] - 2026-02-02', '', '- 旧', ''].join('\n'),
   })
   try {
+    const { failures, notes } = checkRelease(dir)
+    assert.deepEqual(failures, [])
+    assert.ok(
+      notes.some((line) => line.includes('待发布小节 1.2.4')),
+      notes.join('\n'),
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('checkRelease flags a CHANGELOG that is one version behind package.json', () => {
+  const dir = makeReleaseFixture({
+    version: '1.2.3',
+    changelog: ['# Changelog', '', '## [Unreleased]', '', '## [1.2.2] - 2026-01-01', '', '- 旧', ''].join('\n'),
+  })
+  try {
     const { failures } = checkRelease(dir)
     assert.ok(
-      failures.some((line) => line.includes('最上面的版本小节是 1.2.4')),
+      failures.some((line) => line.includes('比 package.json 的 1.2.3 旧')),
       failures.join('\n'),
     )
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('compareVersions orders x.y.z numerically', () => {
+  assert.equal(compareVersions('1.0.10', '1.0.9'), 1)
+  assert.equal(compareVersions('0.10.0', '0.9.99'), 1)
+  assert.equal(compareVersions('1.0.0', '1.0.0'), 0)
+  assert.equal(compareVersions('0.9.9', '1.0.0'), -1)
 })
 
 test('checkRelease catches retrieval-check VERSION drifting from package.json', () => {
