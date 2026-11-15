@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { runResearch, groupEvidence, looksLikeFollowUp } from '../lib/pipeline.js'
+import { downgradeConfidence } from '../lib/brief.js'
+import { resolveStrategy } from '../lib/strategy.js'
 import { rankHits } from '../lib/util.js'
 
 const selection = { provider: 'test', model: 'test-model' }
@@ -737,4 +739,47 @@ test('disputed evidence becomes an explicit 存在冲突 section before 置信�
   assert.match(result.brief, /\[S\d\][^\n]*nodejs\.org/)
   assert.match(result.brief, /（支持）/)
   assert.match(result.brief, /（反驳）/)
+})
+
+test('no strategy pack and the concept pack produce the same result', async () => {
+  // The concept pack is the identity element: resolveStrategy(concept) deep-
+  // equals STRATEGY_DEFAULTS, so passing it must not change one byte of output.
+  const run = (strategy) => runResearch({
+    question: '什么是 JavaScript 事件循环',
+    depth: 'standard',
+    config: baseConfig(),
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+    ...(strategy ? { strategy } : {}),
+  })
+  const legacy = await run()
+  const concept = await run(resolveStrategy({ questionKind: 'concept', depth: 'standard' }))
+  assert.equal(concept.brief, legacy.brief)
+  assert.equal(concept.confidence, legacy.confidence)
+  assert.deepEqual(concept.gaps, legacy.gaps)
+  assert.deepEqual(concept.sources.map((source) => source.url), legacy.sources.map((source) => source.url))
+  assert.equal(concept.depthUsed, legacy.depthUsed)
+  assert.equal(concept.stats.queries, legacy.stats.queries)
+})
+
+test('a declared missing section gets a placeholder and costs one confidence notch', async () => {
+  const concept = resolveStrategy({ questionKind: 'concept', depth: 'standard' })
+  const pack = { ...concept, brief: { requiredSections: ['## 迁移成本'] } }
+  const run = (strategy) => runResearch({
+    question: '什么是 JavaScript 事件循环',
+    depth: 'standard',
+    config: baseConfig(),
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+    ...(strategy ? { strategy } : {}),
+  })
+  const base = await run()
+  const declared = await run(pack)
+  assert.doesNotMatch(base.brief, /## 迁移成本/)
+  assert.ok(declared.brief.includes('## 迁移成本\n- 不适用'), declared.brief)
+  assert.ok(declared.brief.indexOf('## 迁移成本') < declared.brief.indexOf('## 置信度'))
+  assert.equal(declared.confidence, downgradeConfidence(base.confidence))
+  assert.ok(declared.confidence !== base.confidence, `expected a notch below ${base.confidence}`)
 })
