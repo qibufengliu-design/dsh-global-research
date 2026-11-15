@@ -6,11 +6,11 @@
 
 | 变更 | 版本位 | 例子 |
 |---|---|---|
-| 破坏兼容：工具参数语义变化、配置键重命名/删除、返回结构不兼容 | MAJOR | `1.0.0` 之前仍用 MINOR 表达（`0.x` 段） |
+| 破坏兼容：工具参数语义变化、配置键重命名/删除、返回结构不兼容、置信度口径收紧 | MAJOR | `0.10.x → 1.0.0`（`0.x` 阶段曾用 MINOR 表达破坏性变更，`1.0.0` 起不再例外） |
 | 新增能力：新参数、新通道、新垂直源、新简报章节、新分类 | MINOR | `0.9.0 → 0.10.0` |
 | 修 bug、调文案、改提示词、补测试、仓库结构整理 | PATCH | `0.9.0 → 0.9.1` |
 
-`0.x` 阶段按 DSH 插件生态惯例：破坏性变更也走 MINOR，并把「破坏点」写进 `CHANGELOG.md` 的 `### Changed`。
+`0.x` 阶段按 DSH 插件生态惯例：破坏性变更也走 MINOR，并把「破坏点」写进 `CHANGELOG.md` 的 `### Changed`。**1.0.0 起这条惯例作废**——破坏性变更必须发 MAJOR，并写进 `### Breaking`（或 `### Breaking / Behaviour`）；行为变化即使不破坏接口，也要在 CHANGELOG 里点名（如 1.0.0 的 `confidence` 口径、时效题不走缓存、抓取失败按通道区分）。
 
 ## 发布清单
 
@@ -21,7 +21,7 @@
 3. **真实网络回归**：至少跑一次 `retrieval-check`（A 题：RAG 选型）与一次 B/C 题；跑不动就记录「未运行 + 原因」，不允许编造结论。结论写到仓库外的工作笔记（本机在 `docs/superpowers/specs/` 同级的项目笔记目录），不提交进仓库。
 4. **版本号**：改 `package.json.version`。
 5. **CHANGELOG**：在 `CHANGELOG.md` 顶部新增 `## [x.y.z] - YYYY-MM-DD`，分类用 `Added` / `Changed` / `Fixed` / `Removed` / `Security`；写清「为什么」和实测数字，不只写「优化了 X」。
-6. **文档同步**：README 的参数表、配置表、特性列表；`docs/` 对应页；配置项变化必须同步 `docs/configuration.md`。
+6. **文档同步**：README 的参数表、配置表、特性列表；`docs/` 对应页；配置项变化必须同步 `docs/configuration.md`；能力边界有变化时同步 `LIMITATIONS.md`（README 的「边界与已知限制」链到它，不要各写一份）。
 7. **零依赖**：确认 `dependencies` / `devDependencies` 为空。
 8. **提交**：Conventional Commits，一个版本一个 commit；提交作者必须是仓库主人身份（见下「提交身份」）。
 9. **打 tag**：`git tag -a vX.Y.Z -m "vX.Y.Z：一句话"`，与 `package.json.version` 一致。**只打 annotated tag**。

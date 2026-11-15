@@ -15,9 +15,9 @@
 ## 怎么跑
 
 ```powershell
-node scripts/test-all.mjs        # 逐文件跑全部测试（19 个文件 / 412 例，2026-11-16 实测全绿）
+node scripts/test-all.mjs        # 逐文件跑全部测试（19 个文件 / 415 例，2026-11-16 实测全绿）
 node scripts/check-docs.mjs      # 仓库整洁性：必需文件、链接、CHANGELOG、零依赖、参数表、无密钥/本机路径、workflow 结构
-node scripts/check-release.mjs   # 发布一致性：版本号 ↔ CHANGELOG 最上面一节 ↔ retrieval-check 的 VERSION、预算表 ↔ DEPTH_PROFILES、文档里没有写死的例数
+node scripts/check-release.mjs   # 发布一致性：版本号 ↔ CHANGELOG 小节、预算表 ↔ DEPTH_PROFILES、文档里没有写死的例数
 node scripts/retrieval-check.mjs --question "…" --depth standard   # 真引擎检索/选页自检，不跑 LLM
 ```
 

@@ -163,6 +163,12 @@ Web 端不再是通用工具行，而是一张卡片：置信度徽章（高/中
 
 机制细节（查询规划、官方直取、EUR-Lex Cellar 映射、sitemap 定向爬取、证据档位与排序）见 [docs/architecture.md](docs/architecture.md)。
 
+## 边界与已知限制
+
+这个工具擅长「有公开资料、且正文抓得到」的研究题。做不到的部分集中写在一页里：[LIMITATIONS.md](LIMITATIONS.md)——JS 渲染页与登录墙（走 Jina 兜底，或把正文贴进 `text`）、没有站点地图的官方站、币种与计费口径不归一、中文与非英语来源召回弱、`confidence` 是多源一致性而非事实正确率、预算到头返回 `partial` 不等于「查完了」。
+
+测试规模不在文档里写死（加一个测试就会过期，`scripts/check-release.mjs` 也会拦）：跑 `node scripts/test-all.mjs`，总数以脚本输出为准。
+
 ## 常见问题
 
 **为什么查不到某个官网的价格 / 参数？**
@@ -201,6 +207,7 @@ node scripts/check-release.mjs  # 发布一致性：版本号、CHANGELOG 小节
 | [docs/configuration.md](docs/configuration.md) | 全部配置键、付费引擎、垂直源、缓存、设置页、迁移到另一台机器 |
 | [docs/development.md](docs/development.md) | 本地环境、测试、真实网络回归、调试与排错 |
 | [docs/release.md](docs/release.md) | 版本号规则、发布清单、推送环境要求 |
+| [LIMITATIONS.md](LIMITATIONS.md) | 已知限制：做不到什么、为什么、以及怎么绕 |
 | [CHANGELOG.md](CHANGELOG.md) | 每个版本改了什么 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 开发环境、提交规范、PR 检查表 |
 | [SECURITY.md](SECURITY.md) | 支持版本、漏洞报告方式与响应时间 |
