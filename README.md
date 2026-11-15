@@ -417,6 +417,23 @@ API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会
 
 ## 更新日志
 
+### 0.8.0（2026-11-15）
+
+- **可复跑的检索回归脚本**：`scripts/retrieval-check.mjs` 把**真实引擎 + 真实抓页器**接进 `runResearch`，只把模型换成假客户端，于是「检索与选页」成为唯一变量——不必每次跑完整 2 分钟研究，也不需要可用的 LLM key：
+
+  ```bash
+  node scripts/retrieval-check.mjs --question "Java 后端做 RAG 应用，Spring AI、LangChain4j、Haystack 该怎么选"
+  npm run retrieval-check -- --question "…" --focus "迁移成本,生态" --depth deep --json
+  ```
+
+  - 引擎：先读 `TAVILY_API_KEY`；没有则从 `~/.dsh/profiles/desktop/cordis.patch.yml` 的 `keys:` 段读 `tavily`（引号值与裸值都认，`engines.tavily: true` 这类同名字段不会被误读）；两处都没有就只跑 `ddg-html` 并在 stderr 说明「DuckDuckGo 一拦爬虫整轮就会失败」。
+  - 输出（human）：四数 `identified · deduped · readable · adopted`；**采用来源按档位拆分** `docPage / repoCode / other`（括号里给全档位 doc-index / repo-doc / forum / blog / other 明细）；`verticals` 与「垂直源命中」数；`queries`（含语义/技术/官方分类）、`engineErrors`、`clusters`；前 10 条采用 URL 及 `sourceTier(url)`；耗时；`RESULT: PASS/FAIL`。
+  - `--json` 时只把 JSON 打到 stdout（日志仍走 stderr），便于存档前后对比；`--depth` 默认 `standard`（实测一次约 14 s）。
+  - 退出码：采用数 `< 1` 时为 `1`。它只回答「选页有没有全丢」，不判断内容质量——假模型给固定简报（`## 结论` + `[S1]…[S10]`），所以采用数跟着真实选出的页面走，`docPage/repoCode` 的拆分才是回归信号（0.7.0 的回归 A 就是「github 5 条、文档 2 条」）。
+  - 为什么用假模型：`lib/llm.js` 只有一个 `stream()` 入口，没有 `call(prompt)`；脚本实现了同形状的假客户端，按 prompt 分派——`检索计划` 回 `{"queries":[{"q":"<问题>","kind":"semantic"}],"directUrls":[]}`，`拆解` 回固定 `subQuestions`（不写 `criteria`，让 focus 生效），证据回 `[]`（随后照常走逐页启发式兜底），其余回固定简报。
+- **脚本纯函数可单测**：统计与参数解析拆成 `summarize(sources, stats)`（四数 + 档位分桶 + 前 10 条）、`exitCodeFor(summary)`、`tavilyKeyFromPatch(text)`、`parseArgs(argv)`，`test/retrieval-check.test.js` 不联网只 import 这些函数。
+- 测试总数 310（新增 retrieval-check 5：档位分桶与四数一致、`stats.adopted` 兜底与 top10 截断、退出码判定、`tavilyKeyFromPatch` 引号/裸值/`engines.tavily` 不误读、`parseArgs` 的 `--flag value` 与 `--flag=value`）。
+
 ### 0.7.1（2026-11-15）
 
 - **零证据选项显式提示**：compare 模式（以及 `tech-selection` 一类对比式选型）在合成前先算每个候选选项的证据覆盖。`lib/pipeline.js` 的 `compareOptions(question, focus)` 从问题与评估维度里按 `|`、`/`、`、`、`vs`、`还是` 切出候选（去重、最多 5 个），`countOptionHits` 用选项 token 与 cluster 的 claim/证据文本比对；命中为 0 的选项追加进 `gaps`：`选项「X」在本轮证据中没有可用来源（零证据），未纳入对比`，同时写进 `stats` 之外的结果字段供简报兜底。`lib/brief.js` 的 `applyZeroEvidenceOptions` 再把「## 方案对比」表里该选项行的其余单元格改写为 `无证据`（模型漏写这行时补一行；整段没有表格时退化成 bullet），并在「## 未解决」保留同一句。改表发生在 `validateCitations` 之前，被清掉的 `[S#]` 不会留在参考里；函数幂等。

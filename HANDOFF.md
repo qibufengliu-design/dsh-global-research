@@ -2,7 +2,7 @@
 
 ## 一句话状态
 
-插件可日常使用（P0–P8 + 0.6.x + 0.7.0 + 0.7.1 全部完成），**已推送到 GitHub**（`main` 随 0.6.8 推过；0.7.0、0.7.1 尚未推）。
+插件可日常使用（P0–P8 + 0.6.x + 0.7.0 + 0.7.1 + 0.8.0 全部完成），**已推送到 GitHub**（`main` 随 0.6.8 推过；0.7.0、0.7.1、0.8.0 尚未推）。0.8.0 起有 `scripts/retrieval-check.mjs`：不跑完整研究、不花 LLM，就能验证「检索与选页」有没有退化。
 
 ## 仓库与版本
 
@@ -21,7 +21,8 @@
   - `14402f7` 0.7.0 证据排序层：具体 API/参考页排在仓库源码之前
   - `bf91614` docs: handoff 0.7.0 commit hash
   - 0.7.1（本次提交）零证据对比提示 + 缓存落盘 + planner 查询三分类；hash 在此文件改写后生成，未回填
-- 测试：17 个文件逐个跑，**305 例全绿**（`node --test test/` 在沙箱会 EPERM，只能逐文件跑）
+  - 0.8.0（本次提交）检索回归脚本 `scripts/retrieval-check.mjs` + 纯函数单测；hash 在此文件改写后生成，未回填
+- 测试：18 个文件逐个跑，**310 例全绿**（`node --test test/` 与 `node --test test/<file>` 在沙箱都会 EPERM，只能 `node test/<file>.test.js` 让 node:test 在进程内跑）
 
 ## 推送
 
@@ -45,6 +46,7 @@ git -c http.sslBackend=openssl push origin main
 7. **零证据选项说清楚**（0.7.1）：用户比的选项若一条证据都没有，不再从表里悄悄消失——表里该行写 `无证据`，`gaps` 与「## 未解决」都留同一句。
 8. **缓存可落盘**（0.7.1，默认关）：`cache.persistPath` 非空时启动读回、`set/clear` 防抖原子写；过期条目与坏快照都不会污染进程。
 9. **检索计划可审计**（0.7.1）：planner 给每条 query 标 semantic/technical/official，`> 检索流程：` 行尾多一段 `· 查询 中文语义 a / 英文技术 b / 官方定向 c`。
+10. **检索回归可复跑**（0.8.0）：`node scripts/retrieval-check.mjs --question "…" [--focus "a,b"] [--depth standard] [--json]` 用真实引擎 + 真实抓页器和假模型跑完整 `runResearch`，输出四数、采用来源的 `docPage/repoCode/other` 拆分、垂直源命中与前 10 条 URL 及档位；采用 0 条退出码 1。tavily key 先取 `TAVILY_API_KEY`，再取桌面 profile 的 `keys.tavily`（裸值/引号都认），都没有就只跑 ddg-html 并说明。单测不联网，只测纯函数 `summarize/exitCodeFor/tavilyKeyFromPatch/parseArgs`。
 
 ## 已知缺口（不是 bug，是数据/结构限制）
 
@@ -54,6 +56,7 @@ git -c http.sslBackend=openssl push origin main
 
 ## 下次接着做
 
-- 推送本地提交（0.7.0 之后又多了 0.7.1 的 1 个）；
+- 推送本地提交（0.7.0 之后又多了 0.7.1 与 0.8.0 的 2 个）；
+- 日常自检：怀疑「检索变差」时先跑 `node scripts/retrieval-check.mjs --question "…"`，看 `docPage/repoCode` 拆分与四数，别先跑完整研究（0.8.0）。
 - 可选：`text` 参数做 UI 入口。
 - 运行手册与细节：`D:\Total\docs\superpowers\specs\2026-11-15-regression-0.6.md`、`2026-11-15-p5-research-hardening.md`、`2026-11-15-cross-domain-scan.md`。
