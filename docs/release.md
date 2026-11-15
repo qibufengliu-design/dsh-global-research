@@ -27,7 +27,7 @@
 9. **打 tag**：`git tag -a vX.Y.Z -m "vX.Y.Z：一句话"`，与 `package.json.version` 一致。**只打 annotated tag**。
 10. **推送**：`git push origin main --follow-tags`，并在推送后核对远端 HEAD。
 11. **核对**：`git ls-remote origin HEAD refs/heads/main refs/tags/*` 的 `refs/heads/main` 与本地 `HEAD` 相同，tag 已在远端。
-12. **Release**：推送 tag 后 `.github/workflows/release.yml` 会自动用 `CHANGELOG.md` 里该版本的条目创建 GitHub Release；历史 tag 可在 Actions 里用 `workflow_dispatch` 补建（不重打 tag）。
+12. **Release**：推送 tag 后 `.github/workflows/release.yml` 会自动用 `CHANGELOG.md` 里该版本的条目创建 GitHub Release；历史 tag 可在 Actions 里用 `workflow_dispatch` 补建（填 tag 名，不重打 tag）。补建路径检出 `main`（脚本与完整 CHANGELOG 都在 main），只校验 tag 存在且 CHANGELOG 有对应小节，不要求旧 tag 的 `package.json` 等于当前版本。
 
 ## tag 规则
 

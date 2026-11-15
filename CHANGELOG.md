@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Release workflow 的补建路径**（`2aa5d12`）：`workflow_dispatch` 补建历史 Release 时原本会检出 `main` 却按旧 tag 校验 `package.json` 版本，且旧 tag 树里没有 `scripts/release-notes.mjs`，导致 v0.9.0–v0.9.4 补建必然失败。现在 dispatch 路径检出 `main`、只校验 tag 存在且 `CHANGELOG.md` 有对应小节；push tag 路径仍检出 tag 并校验版本一致。
+
 ## [0.9.5] - 2026-11-15
 
 > 起因是一次 standard「国内大模型 API 价格对比」真实运行：180s 预算下拆题 26s / 检索 49s / **证据 86s** / 合成 14s，定向回补因「剩余时间不足」没跑，最终「可读 10 篇 · 采用 1 篇、豆包零证据」。本版把证据提取并行化并上调墙钟，同时补上「采用率为什么是 1」的诊断信号。
