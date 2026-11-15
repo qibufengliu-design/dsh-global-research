@@ -1856,6 +1856,49 @@ test('a pricing retry fetches the vendor price page directly instead of searchin
   assert.match(result.brief, /定向回补 1 项（解决 1）/)
 })
 
+test('a price-table seed page becomes evidence instead of a zero-evidence row (0.9.8)', async () => {
+  // The 0.9.7 bug, end to end: the vendor price page is fetched and cited, but its
+  // body is a flattened table — no paragraph reaches the 60-character gate for an
+  // official page, so 豆包 used to land in the table with 无证据.
+  const tableOnly = [
+    '豆包大模型 模型价格',
+    '模型 输入价格 输出价格',
+    'doubao-pro-32k 0.0008 元/千 tokens 0.002 元/千 tokens',
+    'doubao-lite-128k 0.0003 元/千 tokens 0.0006 元/千 tokens',
+  ].join('\n')
+  const fetched = []
+  const baseFetch = priceFetcher()
+  const config = baseConfig()
+  config.__engines = [optionAwareEngine([])]
+  config.__fetchPage = async (url) => {
+    fetched.push(url)
+    if (url === DEAD_DOUBAO_SEED) {
+      return {
+        url, finalUrl: url, title: '豆包大模型价格', domain: 'www.volcengine.com', text: tableOnly, ok: true,
+      }
+    }
+    return baseFetch(url)
+  }
+  const result = await runResearch({
+    question: DOUBAO_QUESTION,
+    depth: 'standard',
+    mode: 'compare',
+    strategy: pricingStrategyWithoutSeeds(),
+    config,
+    llm: fakeLlm(doubaoPriceResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.ok(result.sources.some((source) => source.url === DEAD_DOUBAO_SEED), JSON.stringify(result.sources))
+  // The option is covered by the seed page alone: no directed search, no gap.
+  assert.equal(result.stats.targetedRefill.optionsResolved, 1, JSON.stringify(result.stats.targetedRefill))
+  assert.ok(!result.gaps.some((gap) => gap.includes('选项「豆包」')), JSON.stringify(result.gaps))
+  // The source the brief got from that page is a price row, not a paragraph: on a
+  // table-only body the 0.9.8 branch is the only way it can carry a claim at all.
+  const seedSource = result.sources.find((source) => source.url === DEAD_DOUBAO_SEED)
+  assert.equal(seedSource.type, 'pricing')
+})
+
 test('a pricing seed that is still dead falls back to the directed search (0.9.7)', async () => {
   const queries = []
   const fetched = []
