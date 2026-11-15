@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { extractAssertions, findAssertionConflicts } from '../lib/assertions.js'
+import { extractAssertions, findAssertionConflicts, findEntityDivergences, normalizeEntity } from '../lib/assertions.js'
 
 function card(url, claim, publishedAt) {
   return { claim, quote: claim, url, domain: new URL(url).hostname, publishedAt }
@@ -264,6 +264,81 @@ test('flags values it cannot convert instead of ranking them', () => {
     conflicts[0].values.map((entry) => `${entry.value} ${entry.unit}`),
     ['512 MB', '512K tokens'],
   )
+})
+
+test('does not turn a qwen output ceiling and a Bedrock Sonnet 4 limit into a conflict', () => {
+  // Real false positive: the brief printed
+  // "- 上下文窗口：65536 tokens（[S1]） · 200k tokens（[S2]）" as if two sources
+  // disagreed, but 65536 was qwen3-coder-plus' maximum output and the Bedrock
+  // number was Claude Sonnet 4's on-demand ceiling. Different objects, both true.
+  const conflicts = findAssertionConflicts([
+    card('https://help.aliyun.com/qwen', 'qwen3-coder-plus 的最大输出为 65536 tokens'),
+    card('https://docs.aws.amazon.com/bedrock/claude', 'Bedrock 上 Claude Sonnet 4 的输出上限为 131072 tokens'),
+    // The two sources that really are talking about Claude 3.7 agree with each other.
+    card('https://docs.anthropic.com/claude-3-7', 'Claude 3.7 Sonnet 的上下文窗口为 200K tokens'),
+    card('https://www.anthropic.com/models', 'Claude 3.7 Sonnet 上下文窗口 200K tokens'),
+  ])
+  assert.deepEqual(conflicts, [])
+})
+
+test('still conflicts 384K vs 256K when neither page names a model', () => {
+  // The historical case must keep working: two pages that never name an object
+  // have exactly one value each, so the pair is still the only reading.
+  const items = [
+    card('https://platform.example.com/docs/models', '官方输出上限 384K tokens'),
+    card('https://bench.example.org/review', '第三方实测输出上限 256K tokens'),
+  ]
+  assert.deepEqual(
+    extractAssertions(items[0]).filter((assertion) => assertion.kind === 'capacity').map((assertion) => assertion.entity),
+    [null],
+  )
+  const conflicts = findAssertionConflicts(items)
+  assert.equal(conflicts.length, 1)
+  assert.equal(conflicts[0].attribute, '输出上限')
+})
+
+test('still conflicts when the same entity is stated with two different values', () => {
+  const conflicts = findAssertionConflicts([
+    card('https://a.com/claude', 'Claude 3.7 Sonnet 的上下文窗口为 200K tokens'),
+    card('https://b.com/claude', 'Claude 3.7 Sonnet 的上下文窗口为 1M tokens'),
+  ])
+  assert.equal(conflicts.length, 1)
+  assert.equal(conflicts[0].attribute, '上下文窗口')
+  assert.deepEqual(conflicts[0].values.map((entry) => entry.value), ['200K', '1M'])
+})
+
+test('treats a model id and its display name as the same entity', () => {
+  assert.equal(normalizeEntity('claude-3-7-sonnet-20250219'), normalizeEntity('Claude 3.7 Sonnet'))
+  // One model, two spellings: the numbers are still two answers to one question.
+  const conflicts = findAssertionConflicts([
+    card('https://a.com/x', 'claude-3-7-sonnet-20250219 的上下文窗口为 200K tokens'),
+    card('https://b.com/x', 'Claude 3.7 Sonnet 的上下文窗口为 1M tokens'),
+  ])
+  assert.equal(conflicts.length, 1)
+})
+
+test('reports numbers about different objects as a divergence, not a conflict', () => {
+  const items = [
+    card('https://help.aliyun.com/qwen', 'qwen3-coder-plus 的最大输出为 65536 tokens'),
+    card('https://docs.aws.amazon.com/bedrock/claude', 'Claude Sonnet 4 的输出上限为 131072 tokens'),
+  ]
+  assert.deepEqual(findAssertionConflicts(items), [])
+  const divergences = findEntityDivergences(items)
+  assert.equal(divergences.length, 1)
+  assert.equal(divergences[0].attribute, '输出上限')
+  assert.deepEqual(
+    divergences[0].values.map((entry) => entry.source),
+    ['help.aliyun.com', 'docs.aws.amazon.com'],
+  )
+})
+
+test('leaves a number without a model name unattached instead of borrowing one', () => {
+  // "Node 22.11.0" is a version, not a model id: the number belongs to the
+  // product "Node", so it must not become an entity of its own.
+  const [assertion] = ofKind(extractAssertions(card('https://a.com/x', 'Node 22.11.0 is the current LTS')), 'version')
+  assert.equal(assertion.entity, null)
+  const [capacity] = ofKind(extractAssertions(card('https://a.com/x', '输出上限 384K tokens')), 'capacity')
+  assert.equal(capacity.entity, null)
 })
 
 test('does not read headcounts, percentages or prices as capacity', () => {

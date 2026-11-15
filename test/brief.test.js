@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  appendReferences, appendStats, assignSourceIds, buildResult, computeConfidence,
+  appendConflictSection, appendReferences, appendStats, assignSourceIds, buildResult, computeConfidence,
   ensureSections, fallbackBrief, gradeSource, validateCitations,
 } from '../lib/brief.js'
 import { autoDepth, buildQueries, groupEvidence, resolveDepth, shortFragments } from '../lib/pipeline.js'
@@ -350,4 +350,57 @@ test('ensureSections adds a fallback 下一步建议 when the model omitted it',
   const kept = ensureSections('## 下一步建议\n- 跑 npm view node version', 'medium', [])
   assert.equal(kept.match(/## 下一步建议/g).length, 1)
   assert.match(kept, /跑 npm view node version/)
+})
+
+function divergence(attribute, left, right) {
+  return {
+    attribute,
+    values: [
+      { value: left.value, unit: left.unit, source: left.source },
+      { value: right.value, unit: right.unit, source: right.source },
+    ],
+  }
+}
+
+test('numbers that describe different objects become a 口径差异 note, not a conflict', () => {
+  const divergences = [divergence('输出上限', { value: '65536', unit: 'tokens', source: 'S1' }, { value: '131072', unit: 'tokens', source: 'S2' })]
+  const brief = ensureSections(
+    '## 结论\nx [S1][S2]\n\n## 置信度\nmedium\n\n## 未解决\n- 无',
+    'medium', [], [], null, [], divergences,
+  )
+  // Two true statements about two different models are not a contradiction.
+  assert.doesNotMatch(brief, /## 存在冲突/)
+  assert.match(
+    brief,
+    /^- 口径差异：输出上限在不同对象上分别为 65536 tokens（\[S1\]） \/ 131072 tokens（\[S2\]），不可直接比较$/m,
+  )
+  assert.ok(brief.indexOf('## 未解决') < brief.indexOf('- 口径差异'))
+})
+
+test('the 口径差异 note is capped at two lines and never duplicated', () => {
+  const divergences = [
+    divergence('输出上限', { value: '65536', unit: 'tokens', source: 'S1' }, { value: '131072', unit: 'tokens', source: 'S2' }),
+    divergence('上下文窗口', { value: '128K', unit: 'tokens', source: 'S3' }, { value: '200K', unit: 'tokens', source: 'S4' }),
+    divergence('输入价格', { value: '0.2', unit: '元/百万 tokens', source: 'S1' }, { value: '0.5', unit: '元/百万 tokens', source: 'S5' }),
+  ]
+  const brief = appendConflictSection('## 结论\nx\n\n## 置信度\nmedium\n\n## 未解决\n- 无', [], [], divergences)
+  assert.equal(brief.match(/口径差异/g).length, 2)
+  const twice = ensureSections(brief, 'medium', [], [], null, [], divergences)
+  assert.equal(twice.match(/口径差异/g).length, 2)
+})
+
+test('the 口径差异 note is inserted before citation renumbering so its ids stay true', () => {
+  const sources = [
+    { id: 'S1', title: 'qwen', url: 'https://help.aliyun.com/qwen' },
+    { id: 'S2', title: 'bedrock', url: 'https://docs.aws.amazon.com/bedrock/claude' },
+    { id: 'S3', title: 'anthropic', url: 'https://docs.anthropic.com/claude-3-7' },
+  ]
+  const divergences = [divergence('输出上限', { value: '65536', unit: 'tokens', source: 'S1' }, { value: '131072', unit: 'tokens', source: 'S2' })]
+  // The model cites [S3] first, so renumbering turns S3 into S1 — and the note
+  // must follow, or it would point at the wrong source.
+  const withNote = appendConflictSection('## 结论\nx [S3]\n\n## 置信度\nmedium\n\n## 未解决\n- 无', [], [], divergences)
+  const { brief, sources: finalSources } = validateCitations(withNote, sources)
+  assert.equal(finalSources.length, 3)
+  assert.match(brief, /口径差异：输出上限在不同对象上分别为 65536 tokens（\[S2\]） \/ 131072 tokens（\[S3\]）/m)
+  assert.equal((brief.match(/\[S1\]/g) ?? []).length, 1)
 })
