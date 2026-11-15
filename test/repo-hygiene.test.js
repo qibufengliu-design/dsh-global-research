@@ -21,6 +21,7 @@ import {
   staleTestCounts,
 } from '../scripts/check-release.mjs'
 import { extractReleaseNotes } from '../scripts/release-notes.mjs'
+import { normalizeBody, parseRepository, releaseBodyMatches } from '../scripts/verify-release.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -292,6 +293,46 @@ test('checkDocumentedCommands flags commands that no longer exist', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('normalizeBody irons out line endings and trailing blanks', () => {
+  assert.equal(normalizeBody('a  \r\nb\r\n\r\n'), 'a\nb')
+  assert.equal(normalizeBody(undefined), '')
+})
+
+test('releaseBodyMatches compares a release page against the tagged CHANGELOG section', () => {
+  const changelog = [
+    '# Changelog',
+    '',
+    '## [Unreleased]',
+    '',
+    '## [1.2.3] - 2026-01-01',
+    '',
+    '### Added',
+    '',
+    '- 一件小事',
+    '',
+    '## [1.2.2] - 2025-12-31',
+    '',
+    '- 旧事',
+    '',
+  ].join('\n')
+  const good = releaseBodyMatches(changelog, '### Added\n\n- 一件小事\n', 'v1.2.3')
+  assert.equal(good.ok, true)
+  const stale = releaseBodyMatches(changelog, '### Added\n\n- 另一件事\n', '1.2.3')
+  assert.equal(stale.ok, false)
+  assert.match(stale.reason, /不一致/)
+  assert.equal(releaseBodyMatches(changelog, '### Added\n\n- x\n', '9.9.9').ok, false)
+  assert.match(releaseBodyMatches(changelog, '', '1.2.3').reason, /正文是空的/)
+})
+
+test('parseRepository reads owner/repo out of the package metadata', () => {
+  assert.deepEqual(
+    parseRepository({ repository: { url: 'git+https://github.com/qibufengliu-design/dsh-global-research.git' } }),
+    { owner: 'qibufengliu-design', repo: 'dsh-global-research' }
+  )
+  assert.equal(parseRepository({}), null)
+  assert.equal(parseRepository({ repository: { url: 'https://gitlab.com/a/b.git' } }), null)
 })
 
 test('parseDepthProfiles reads the real profile numbers', () => {

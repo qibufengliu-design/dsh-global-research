@@ -28,6 +28,7 @@
 10. **推送**：`git push origin main --follow-tags`，并在推送后核对远端 HEAD。
 11. **核对**：`git ls-remote origin HEAD refs/heads/main refs/tags/*` 的 `refs/heads/main` 与本地 `HEAD` 相同，tag 已在远端。
 12. **Release**：推送 tag 后 `.github/workflows/release.yml` 会自动用 `CHANGELOG.md` 里该版本的条目创建 GitHub Release；历史 tag 可在 Actions 里用 `workflow_dispatch` 补建（填 tag 名，不重打 tag）。补建路径检出 `main`（脚本与完整 CHANGELOG 都在 main），只校验 tag 存在且 CHANGELOG 有对应小节，不要求旧 tag 的 `package.json` 等于当前版本。
+13. **核对 Release 正文**：`node scripts/verify-release.mjs vX.Y.Z` 会拉 Release 页与**该 tag 提交上的** `CHANGELOG.md` 比对（工作区可能有下一版改动，所以不拿工作区比）。正文与 CHANGELOG 小节不一致、Release 页不存在，都会非零退出。可选 `GITHUB_TOKEN` 只为放宽 API 限流。
 
 ## tag 规则
 

@@ -51,6 +51,7 @@ const REQUIRED_FILES = [
   'scripts/check-docs.mjs',
   'scripts/check-release.mjs',
   'scripts/release-notes.mjs',
+  'scripts/verify-release.mjs',
 ]
 
 const LINK_SCAN = [
