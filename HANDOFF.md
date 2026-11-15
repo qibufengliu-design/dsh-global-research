@@ -2,12 +2,12 @@
 
 ## 一句话状态
 
-插件可日常使用（P0–P8 已完成）；代码与测试在本地，**最新 6 个提交尚未 push 到 GitHub**（缺 PAT）；需要你执行最后一步推送。
+插件可日常使用（P0–P8 + 0.6.x 全部完成），**已推送到 GitHub**（`main` = `73e9722` 之后随 0.6.8 再推一次）。
 
 ## 仓库与版本
 
 - 本地：`D:\Total\dsh-global-research`（git，工作树干净）
-- 远端：https://github.com/qibufengliu-design/dsh-global-research （与本地差 6 个提交）
+- 远端：https://github.com/qibufengliu-design/dsh-global-research
 - 本地提交（自旧到新）：
   - `d5faf38` 0.6.0 来源通道 sourcePlan + sitemap 爬取 + text 直投
   - `2cbe17f` 0.6.1 四数流程行 + 冲突三分法
@@ -15,18 +15,21 @@
   - `c630089` 0.6.3 官方域名扩充 + 定价种子页 + 币种列
   - `5975896` 0.6.4 sitemap 三候选路径 + index 展开 + 软 404
   - `aaa10cb` 0.6.5 过期源降权 + sitemap 路径偏好
-- 测试：17 个文件逐个跑，**275 例全绿**（`node --test test/` 在沙箱会 EPERM，只能逐文件跑）
+  - `0e5d941` 0.6.6 过期源不得充当论据
+  - `73e9722` 0.6.7 base 相对 sitemap 发现（docs.spring.io/spring-ai 等终于能爬）
+  - `0b71c46` 0.6.8 sitemap 跨主机改写 + 按题选文档 base
+- 测试：17 个文件逐个跑，**290 例全绿**（`node --test test/` 在沙箱会 EPERM，只能逐文件跑）
 
-## 尚未推送的原因与做法
+## 推送
 
-沙箱里 `git credential fill` 失败（`couldn't create signal pipe`），没有 gh、没有 SSH key。用 PAT 推：
+沙箱内 `git push` 需要 `sandbox_permissions: danger-full-access`（普通沙箱里 git 的凭据脚本会 `couldn't create signal pipe`）。做法：
 
 ```powershell
 cd D:\Total\dsh-global-research
-git -c http.sslBackend=openssl push https://qibufengliu-design:<你的PAT>@github.com/qibufengliu-design/dsh-global-research.git main
+git -c http.sslBackend=openssl push origin main
 ```
 
-推完记得在 GitHub 上删除该 PAT。
+凭据管理器（GCM）会弹出一次授权；若用 PAT，则 `https://qibufengliu-design:<PAT>@github.com/...`。
 
 ## 这轮做了什么（用户可感）
 
