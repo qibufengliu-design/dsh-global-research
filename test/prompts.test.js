@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { evidencePrompt, planPrompt, synthPrompt } from '../lib/prompts.js'
+import { evidencePrompt, planPrompt, synthPrompt, compareColumnKind, effectiveCompareColumnKind } from '../lib/prompts.js'
 
 function page(url, text = 'DeepSeek 输入价格 0.2 元/百万 tokens，要求 v22.11.0 以上，有效期到 2027-04-30。') {
   return { url, title: `page ${url}`, text, engine: 'web', publishedAt: '2025-01-01' }
@@ -131,7 +131,9 @@ test('the compare table columns are chosen by the question kind (0.9.9)', () => 
   assert.ok(pricing.includes('| 方案 | 输入价 | 输出价 | 币种/口径 | 适用场景 |'), 'the pricing header is missing')
   assert.ok(pricing.includes('未核实（无来源）'), 'the pricing placeholder is missing')
 
-  for (const kind of ['tech-selection', 'architecture', 'decision']) {
+  // 0.9.10 — evaluate joins the judgement bucket: an evaluation question has no
+  // price axis either, so it must not fall back to the generic header.
+  for (const kind of ['tech-selection', 'architecture', 'decision', 'evaluate']) {
     const prompt = synthPrompt({ ...args, questionKind: kind })
     assert.ok(prompt.includes('| 方案 | 优势 | 风险 | 适用场景 | 成本概览 |'), `the ${kind} header is missing`)
     assert.ok(prompt.includes('不得为了填表编造价格或单价'), `the no-invented-price rule is missing for ${kind}`)
@@ -139,8 +141,8 @@ test('the compare table columns are chosen by the question kind (0.9.9)', () => 
     assert.ok(!prompt.includes('| 价格 |'), `a 价格 column leaked into ${kind}`)
   }
 
-  // learning / evaluate / a missing kind all fall back to the neutral columns.
-  for (const kind of ['learning', 'evaluate', 'concept', null, undefined]) {
+  // learning / a missing kind still fall back to the neutral columns.
+  for (const kind of ['learning', 'concept', null, undefined]) {
     const prompt = synthPrompt({ ...args, questionKind: kind })
     assert.ok(prompt.includes('| 选项 | 优势 | 风险 | 适用条件 |'), `the generic header is missing for ${kind}`)
     assert.ok(!prompt.includes('| 价格 |'), `a 价格 column leaked into ${String(kind)}`)
@@ -150,4 +152,41 @@ test('the compare table columns are chosen by the question kind (0.9.9)', () => 
   assert.ok(synthPrompt({ ...args, questionKind: 'pricing' }).includes('每个候选必须独立一行'))
   assert.ok(synthPrompt({ ...args, questionKind: 'tech-selection' }).includes('每个候选必须独立一行'))
   assert.ok(synthPrompt({ ...args, questionKind: 'learning' }).includes('每个候选必须独立一行'))
+})
+
+// 0.9.10 — 「我们团队 8 个人，微服务该不该拆」 carries no classified signal: the
+// classifier falls back to concept (all scores 0, confidence 0.35), so even after
+// 0.9.9 the table came out generic (选项/适用条件). The wording is a decision, so the
+// table now upgrades to the cost columns while stats.questionKind stays `concept`.
+test('an unclassified decision question still gets the cost columns (0.9.10)', () => {
+  const args = { ...synthArgs(), mode: 'explain' }
+  const decision = '我们团队 8 个人，微服务该不该拆'
+  assert.equal(compareColumnKind('concept'), 'generic', 'concept should still map to generic')
+  assert.equal(effectiveCompareColumnKind('concept', decision), 'cost', 'the decision wording should upgrade to cost')
+
+  const prompt = synthPrompt({ ...args, question: decision, questionKind: 'concept' })
+  assert.ok(prompt.includes('| 方案 | 优势 | 风险 | 适用场景 | 成本概览 |'), 'the decision question kept the generic header')
+  assert.ok(!prompt.includes('| 选项 |'), 'the generic header leaked into the decision question')
+  assert.ok(!prompt.includes('| 价格 |'), 'a 价格 column leaked into the decision question')
+
+  // The other decision phrasings the classifier also misses.
+  for (const wording of ['要不要上 Kubernetes', '值不值得自建机房', '是否该拆微服务', '应不应该换数据库']) {
+    assert.ok(
+      synthPrompt({ ...args, question: wording, questionKind: 'concept' }).includes('| 方案 | 优势 | 风险 | 适用场景 | 成本概览 |'),
+      `no cost header for 「${wording}」`,
+    )
+  }
+
+  // A neutral question that is not a decision keeps the neutral columns.
+  const neutral = synthPrompt({ ...args, question: 'Kubernetes 是什么', questionKind: 'concept' })
+  assert.ok(neutral.includes('| 选项 | 优势 | 风险 | 适用条件 |'), 'a non-decision concept question lost its generic header')
+
+  // The upgrade never overrides a classified bucket: pricing stays pricing.
+  assert.equal(effectiveCompareColumnKind('pricing', decision), 'pricing')
+  assert.ok(
+    synthPrompt({ ...args, question: decision, questionKind: 'pricing' }).includes('| 方案 | 输入价 | 输出价 | 币种/口径 | 适用场景 |'),
+    'the pricing header was overridden by the wording upgrade',
+  )
+  // evaluate is a judgement question, so it is cost.
+  assert.equal(compareColumnKind('evaluate'), 'cost')
 })

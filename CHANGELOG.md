@@ -7,6 +7,31 @@
 
 ## [Unreleased]
 
+## [0.9.10] - 2026-11-16
+
+> 0.9.9 收口时还剩两处没到位。其一，C 题（`我们团队 8 个人，微服务该不该拆`）的表头仍是 `| 选项 | 优势 | 风险 | 适用条件 |`——但它并不是「映射漏了 architecture/decision」（`architecture`/`decision` 在 0.9.9 就已经在 cost 桶里），而是这道题压根没被分类成那些类别：`classify()` 对它的 8 个类别分数全是 0、回落到 `concept`（confidence 0.35，signals `['fallback:no-signal']`），概念题按设计走中性列。其二，A 题（tech-selection）表头已经正确，但「成本概览」三格仍写「未核实（无来源）」：`sanitizeCompareTable()` 确实把 `未核实（无来源）` 清成了 `未核实`，随后 `checkCompareRows()` 按 `/成本/` 把「成本概览」认成价格列，又把标记加了回去——同一层的 `/\d/` 判据另有一处漏：只要格子里出现过数字就保留标记，于是「部署 1 个包（无来源）」这类文字格也留了下来。本版做两件事：**中性类别 + 决策措辞升级到 cost 列**，以及**「（无来源）」只留在纯数量格**。
+>
+> 必须记住的一条边界：**这一版没有让分类器认识判断类问题**。`classify()` 对 C 题仍返回 `concept`（`source: 'fallback'`、confidence 0.35），cost 列是由 `effectiveCompareColumnKind()` 按问题措辞升级出来的；`stats.questionKind` 保持 `concept`，只有调试统计行会把它打印出来。真正的 `decision` 类别要和 `QUESTION_KINDS`、sourcePlan、默认章节、golden 一起改，留到 **1.0.0** 单独做。
+
+### Added
+
+- **`effectiveCompareColumnKind(questionKind, question)`**：`lib/prompts.js` 新导出。先按 `compareColumnKind()` 得到桶，只有当桶是中性（`generic`）且问题带决策措辞（`该不该` / `要不要` / `值不值得` / `是否该` / `应不应该` / `是否值得` / `需不需要`）时才升级到 cost 列。`pricing` 和已分类的类别永不被措辞覆盖；`stats.questionKind` 仍保留分类器的原值——这是「表列决策」，不是重新分类。
+- **`isPriceColumnHeader(cell)`**：`lib/brief.js` 新导出。`成本概览` 是 0.9.9 给判断题引入的中性成本列，允许直接写「未核实」，所以不算 `checkCompareRows()` 要标注的价格列；`价格` / `单价` / `费用` / `成本`（不带「概览」）/ `报价` 仍然是价格列。
+- **调试统计行带类别**：`index.js` 的 `debugStats` 行在「引擎 …」后插 `· 类型 <questionKind>`（缺省 `concept`）。以后再出现「表头不对」，不必先手工跑一遍 `classify()` 才能知道这轮被分成了什么；`statsOf()` 本来就有 `questionKind`，流水线侧无需改动。
+
+### Changed
+
+- **`evaluate` 进 cost 桶**：评估题同样是判断题、没有价格轴，此前落到了 generic。`compareColumnKind('evaluate')` 现在返回 `cost`，表头为 `| 方案 | 优势 | 风险 | 适用场景 | 成本概览 |`；C 题这类「中性类别 + 决策措辞」也走同一套列，不再出 `| 选项 | 优势 | 风险 | 适用条件 |`。
+- **`sanitizeCompareTable()` 的剥离边界改成「纯数量」**：除标签列外，单元格先剥掉 `（无来源）`，只有剥完剩下的是纯数字 + 单位（`0.2 元/百万 tokens`、`8 人`、`99.9%`、`20–40 ms`、`3 天`，含 `20–40` 这样的区间）时才保留原样——数字携带来源标记是 `markUnsourcedNumbers()` 的契约。文字格即便含数字（`部署 1 个包（无来源）`、`v22.11.0（无来源）`）也剥掉；`未核实（无来源）` → `未核实`。类别未知时表头仍保持原样。
+- **`checkCompareRows()` 不再把 `（无来源）` 加回 `成本概览` 列**（转置表的 `成本概览` 行同理）：0.9.9 交付里那条 `未核实（无来源）`，就是 sanitize 清干净之后由这一层按 `/成本/` 重新标注的。pricing 题的价格列仍按 0.9.6 契约把 `未核实` 标成 `未核实（无来源）`，plain `成本` 列也仍按价格列处理。
+- `docs/architecture.md` 补「类别映射与清理边界」：表头由谁决定、措辞升级的适用范围、`（无来源）` 的保留条件，以及为什么 `成本概览` 不在清理层被重新标注。
+
+### Tests
+
+- `test/prompts.test.js` 10 → 11（+1）：C 题同题面 + `questionKind: 'concept'` 出 cost 表头且不出 generic；四种决策措辞各断言一次；非决策的中性题仍走 generic；`pricing` 不被措辞覆盖；`compareColumnKind('evaluate') === 'cost'`。0.9.9 的类别循环里 `evaluate` 从 generic 组挪到 cost 组。
+- `test/brief.test.js` 56 → 58（+2）：纯数量格保留 `（无来源）`、文字格（含数字）剥掉、`未核实（无来源）` → `未核实`、二次调用幂等；`buildResult()` 端到端不再出现 `未核实（无来源）`（带 `compareOptions`，确保这一条是真回归而不是空表），pricing 表的裸 `未核实` 仍被标注，`isPriceColumnHeader('成本') === true` / `isPriceColumnHeader('成本概览') === false`。
+- `node scripts/test-all.mjs` 全绿（本机沙箱内 `node --test` 无法 spawn，逐文件直接执行）。
+
 ## [0.9.9] - 2026-11-15
 
 > 起因是 0.9.7 的一道判断题（C 题「微服务该不该拆」）：它输出了「## 方案对比」，但表里带一列「价格」，每行都是「未核实」——这道题没有价格轴，那一列既填不出来、又读起来像一条结论；更糟的是第 3 行标签直接是「先拆 2-3 个服务（无来源）」，溯源标记漏进了标签列，候选名从此对不上任何选项。本版做两件事：**表列跟着问题类别走**，以及**溯源标记不许出现在标签列**。版本号仍写在 `package.json` 的 0.9.8，由发布 commit 统一 bump。

@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ACTION_CHECKLIST_HEADING, appendConflictSection, appendReferences, appendRetrievalFlow, appendStats, applyZeroEvidenceOptions, assignSourceIds, buildResult,
-  checkCompareRows, computeConfidence, COST_OVERVIEW_HEADER, ensureSections, fallbackBrief, formatRetrievalFlow, gradeSource, markUnsourcedNumbers, missingSections, PRICE_SEE_NOTE, requiredSectionsFor,
+  checkCompareRows, computeConfidence, COST_OVERVIEW_HEADER, ensureSections, fallbackBrief, formatRetrievalFlow, gradeSource, isPriceColumnHeader, markUnsourcedNumbers, missingSections, PRICE_SEE_NOTE, requiredSectionsFor,
   sanitizeCompareTable, UNSOURCED_NUMBER_MARK, validateCitations, zeroEvidenceGapText,
 } from '../lib/brief.js'
 import { findSelfContradictions } from '../lib/assertions.js'
@@ -983,4 +983,83 @@ test('sanitizeCompareTable is idempotent and runs before checkCompareRows in bui
   })
   assert.ok(priced.brief.includes('| 价格 |'), 'the pricing table lost its price column')
   assert.ok(priced.brief.includes('0.2 元/百万 tokens（无来源）'), 'the uncited price lost its mark')
+})
+
+// 0.9.10 — the 0.9.9 strip rule was `/\d/.test(cell)`, so 「未核实（无来源）」 (and
+// any prose cell that merely mentioned a number) kept its mark: the delivered 成本
+// 概览 still read 未核实（无来源）. The rule is now "strip unless the cell is nothing
+// but a quantity".
+const COST_COLUMNS_5 = `| 方案 | 优势 | 风险 | 适用场景 | ${COST_OVERVIEW_HEADER} |`
+
+function costCaseTable() {
+  return [
+    '## 结论', '建议先拆 [S1]。', '',
+    '## 方案对比',
+    COST_COLUMNS_5,
+    '| --- | --- | --- | --- | --- |',
+    '| 单体 | 部署 1 个包（无来源） | 耦合（无来源） | 8 人以内 | 未核实（无来源） |',
+    '| 微服务 | 每次发布 3 分钟（无来源） | 运维复杂（无来源） | 20 人以上 | 0.2 元/百万 tokens（无来源） |',
+    '',
+    '## 置信度', 'medium',
+  ].join('\n')
+}
+
+test('（无来源） survives only on pure quantities, not on prose (0.9.10)', () => {
+  const out = sanitizeCompareTable(costCaseTable(), { questionKind: 'concept' })
+  // Prose cells lose the mark even when they contain digits.
+  assert.ok(out.includes('| 部署 1 个包 |'), 'a digit-bearing prose cell kept （无来源）')
+  assert.ok(out.includes('| 每次发布 3 分钟 |'), 'a digit-bearing prose cell kept （无来源）')
+  assert.ok(out.includes('| 运维复杂 |'), 'a prose cell kept （无来源）')
+  // 未核实 is the reported leak: the value stays, the mark does not.
+  assert.ok(out.includes(`| 未核实 |`), 'the 未核实 value was lost')
+  assert.ok(!out.includes('未核实（无来源）'), '未核实（无来源） survived sanitizeCompareTable')
+  assert.ok(out.includes('| 未核实 |'), '未核实 must stay in the 成本概览 cell')
+  // A pure number+unit cell is a quantitative claim and keeps its provenance.
+  assert.ok(out.includes('0.2 元/百万 tokens（无来源）'), 'a pure quantity lost its provenance mark')
+
+  // The boundary, one cell at a time: quantities keep the mark, prose strips it.
+  const cellTable = (cell) => ['## 方案对比', COST_COLUMNS_5, '| --- | --- | --- | --- | --- |', `| A | x | y | z | ${cell} |`].join('\n')
+  for (const quantity of ['0.2 元/百万 tokens', '8 人', '99.9%', '20–40 ms', '3 天', '1M tokens']) {
+    const kept = sanitizeCompareTable(cellTable(`${quantity}（无来源）`), { questionKind: 'concept' })
+    assert.ok(kept.includes(`${quantity}（无来源）`), `${quantity} is a quantity and must keep （无来源）`)
+  }
+  for (const prose of ['未核实', '延迟低', 'v22.11.0', '先拆 2-3 个服务', '见注']) {
+    const stripped = sanitizeCompareTable(cellTable(`${prose}（无来源）`), { questionKind: 'concept' })
+    assert.ok(stripped.includes(`| ${prose} |`), `${prose} is prose and must lose （无来源）`)
+  }
+  // Idempotent: a second pass changes nothing.
+  assert.equal(sanitizeCompareTable(out, { questionKind: 'concept' }), out)
+})
+
+test('the delivered 成本概览 no longer re-marks 未核实 after sanitize (0.9.10)', () => {
+  const result = buildResult({
+    brief: costCaseTable(), sources: [], confidence: 'medium', gaps: [], partial: false, depth: 'quick',
+    compareOptions: ['单体', '微服务'],
+    stats: { questionKind: 'concept', queries: 1, pagesFetched: 1, llmRounds: 1, elapsedMs: 5 },
+  })
+  // sanitizeCompareTable cleaned it; checkCompareRows used to add it straight back
+  // because 成本概览 matched PRICE_COLUMN /成本/.
+  assert.ok(!result.brief.includes('未核实（无来源）'), 'checkCompareRows re-marked the neutral 成本概览 cell')
+  assert.ok(result.brief.includes(`| 未核实 |`), 'the 未核实 value must stay in 成本概览')
+  assert.ok(result.brief.includes('0.2 元/百万 tokens（无来源）'), 'the quantity provenance mark was lost end to end')
+  assert.ok(result.brief.includes(COST_COLUMNS_5), 'the cost header changed')
+
+  // A pricing question keeps the 0.9.6 contract: a bare 未核实 under 价格 is marked.
+  const pricingTable = [
+    '## 方案对比', '| 方案 | 价格 | 币种/口径 | 适用场景 |',
+    '| --- | --- | --- | --- |',
+    '| DeepSeek | 0.2 元/百万 tokens [S1] | 人民币 | 通用 |',
+    '| Qwen | 未核实 | 人民币 | 通用 |',
+  ].join('\n')
+  const priced = buildResult({
+    brief: pricingTable, sources: [], confidence: 'medium', gaps: [], partial: false, depth: 'quick',
+    compareOptions: ['DeepSeek', 'Qwen'],
+    stats: { questionKind: 'pricing', queries: 1, pagesFetched: 1, llmRounds: 1, elapsedMs: 5 },
+  })
+  assert.ok(priced.brief.includes('未核实（无来源）'), 'a pricing table must still mark a bare 未核实')
+
+  // A plain 成本 column (not 成本概览) still counts as a price column for pricing.
+  assert.equal(isPriceColumnHeader('成本'), true, 'a plain 成本 column is still a price column')
+  assert.equal(isPriceColumnHeader(COST_OVERVIEW_HEADER), false, '成本概览 must not be treated as a price column')
+  assert.equal(isPriceColumnHeader('价格'), true)
 })

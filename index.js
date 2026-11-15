@@ -344,7 +344,9 @@ export function apply(ctx, rawConfig = {}) {
         const evidenceLabel = ` · 证据 批 ${stats.evidenceBatches ?? 0} / 模型 ${stats.evidenceModelItems ?? 0} / 启发式 ${stats.evidenceHeuristicItems ?? 0}`
         // Query/page/evidence/second counts already live in the brief's fixed
         // 「本次检索」 line; keep this row for diagnostics that line omits.
-        result.brief += `\n\n---\n调试统计：引擎 ${(stats.engines ?? []).join(',') || '无'} · 垂直源 ${(stats.verticals ?? []).join(',') || '无'}（${stats.verticalHits ?? 0} 条${Object.keys(stats.verticalsByEngine ?? {}).length ? '：' + Object.entries(stats.verticalsByEngine).map(([name, count]) => `${name} ${count}`).join('，') : ''}）· 官方直取 ${stats.directUrls ?? 0} · sitemap ${stats.sitemapPages ?? 0}${(stats.sourceFailures ?? 0) ? `（失败 ${stats.sourceFailures}）` : ''}${(stats.refillQueries ?? []).length ? ` · 回补 ${stats.refillQueries.length} 条（${stats.refillQueries.map((query) => query.slice(0, 40)).join(' | ')}）` : ''}${targetedLabel}${evidenceLabel} · 域名 ${(stats.hosts ?? []).slice(0, 8).join(',') || '无'}`
+        // 0.9.10 — the classification that picked the compare columns: without it a
+        // wrong header can only be debugged by re-running classify() by hand.
+        result.brief += `\n\n---\n调试统计：引擎 ${(stats.engines ?? []).join(',') || '无'} · 类型 ${stats.questionKind ?? 'concept'} · 垂直源 ${(stats.verticals ?? []).join(',') || '无'}（${stats.verticalHits ?? 0} 条${Object.keys(stats.verticalsByEngine ?? {}).length ? '：' + Object.entries(stats.verticalsByEngine).map(([name, count]) => `${name} ${count}`).join('，') : ''}）· 官方直取 ${stats.directUrls ?? 0} · sitemap ${stats.sitemapPages ?? 0}${(stats.sourceFailures ?? 0) ? `（失败 ${stats.sourceFailures}）` : ''}${(stats.refillQueries ?? []).length ? ` · 回补 ${stats.refillQueries.length} 条（${stats.refillQueries.map((query) => query.slice(0, 40)).join(' | ')}）` : ''}${targetedLabel}${evidenceLabel} · 域名 ${(stats.hosts ?? []).slice(0, 8).join(',') || '无'}`
       }
       const saveTo = typeof args?.saveTo === 'string' ? args.saveTo.trim() : ''
       if (saveTo) {
