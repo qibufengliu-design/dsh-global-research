@@ -7,10 +7,6 @@
 
 ## [Unreleased]
 
-### Fixed
-
-- **Release workflow 的补建路径**（`2aa5d12`）：`workflow_dispatch` 补建历史 Release 时原本会检出 `main` 却按旧 tag 校验 `package.json` 版本，且旧 tag 树里没有 `scripts/release-notes.mjs`，导致 v0.9.0–v0.9.4 补建必然失败。现在 dispatch 路径检出 `main`、只校验 tag 存在且 `CHANGELOG.md` 有对应小节；push tag 路径仍检出 tag 并校验版本一致。
-
 ## [0.9.6] - 2026-11-15
 
 > 起因是 0.9.5 的一次 standard 价格对比题（148s）暴露的两个真实回归：①「定向回补 1 项（解决 1）」确实跑了，但解决的不是豆包——`volcengine.com` 的定价页被读取、又被引用校验剔除，豆包单价仍缺；②「## 方案对比」只剩 deepseek-flash / deepseek-v4-pro 两行 + 一条合并行「qwen / 豆包 API」（价格列「未核实」、无 `[S#]`），候选被并格吞掉。本版做的是「表完整性校验 + 定向检索打准 + 别再把补到的页丢掉」。
@@ -25,6 +21,13 @@
 - **定向回补按厂商价目站检索**：pricing/compare 场景下 `targetedOptionRefill()` 的 query 从通用 `${option} 官方 价格` 改为 `site:<host> ${option} 价格 tokens 百万`（没有映射的选项回落 `${option} API 价格 每百万 tokens`），仍是每选项 1 条、最多 3 个选项；命中厂商主机的页排到证据批最前（`pricingHostsFirst()` / `pricingFirst()`），因为墙钟取消只影响靠后的批次——页进了 `pages` 但排在末尾，等于没进证据。
 - **引用校验只对回补页放宽**：`validateCitations(brief, sources, { refillUrls, maxKept = 2 })` 不再无条件丢弃未被引用的来源——属于定向回补页的保留最多 2 条，`参考` 里标 `（已检索，未被采用）`；`adoptedSources`/`adoptedUrls`/`officialAdopted` 只算真正被引用的（`citedOnly`），采用率不会被虚高。
 - **合成提示词硬规则**：compare 模式明确「每个候选必须独立一行，禁止用 `/`、`、`、`与`、`和` 把两个候选合并进同一格（如「qwen / 豆包 API」）；拿不到价格的候选写「未核实（无来源）」并保留该行」；表格行数上限从「最多 3 行」改为「N 个候选 N 行」，非对比表仍最多 3 行。
+
+### 仓库
+
+- **Release 补建路径修正**（`2aa5d12`）：`workflow_dispatch` 补建历史 Release 时原本会检出 `main` 却按旧 tag 校验 `package.json` 版本，且旧 tag 树里没有 `scripts/release-notes.mjs`，导致 v0.9.0–v0.9.4 补建必然失败。现在 dispatch 路径检出 `main`、只校验 tag 存在且 `CHANGELOG.md` 有对应小节；push tag 路径仍检出 tag 并校验版本一致。
+- **发布一致性检查**：新增 `scripts/check-release.mjs`（版本号与 CHANGELOG 小节、小节从新到旧、README 预算表与 `lib/pipeline.js` 的 `DEPTH_PROFILES` 逐字段一致、文档里没有写死的测试例数），接进 CI 的 `docs & metadata` job；`test/repo-hygiene.test.js` 加 5 例。
+- **整洁性检查扩到 Issue 表单**：`scripts/check-docs.mjs` 现在还会校验 `.github/ISSUE_TEMPLATE/*.yml` 的必填键、`body[].type` 白名单与 id 唯一性——写坏的模板 GitHub 不报错、只是静默不显示。
+- **README**：界面节补上设置页与研究材料胶囊两张截图（此前只有卡片截图被引用），文档索引表补 `CONTRIBUTING` / `SECURITY` / `CODE_OF_CONDUCT`。
 
 ### Tests
 
