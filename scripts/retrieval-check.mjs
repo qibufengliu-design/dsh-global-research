@@ -32,7 +32,7 @@ import { createPageFetcher } from '../lib/fetch.js'
 import { runResearch } from '../lib/pipeline.js'
 import { sourceTier } from '../lib/util.js'
 
-export const VERSION = '1.0.0'
+export const VERSION = '1.0.2'
 export const DEPTHS = ['auto', 'quick', 'standard', 'deep']
 // 0.8.1 — the caller normally passes `mode`, and it decides the strategy pack
 // (compare ⇒ tech-selection ⇒ official-docs channels). Without a way to pass it,
