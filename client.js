@@ -22,6 +22,39 @@ window.__ModuleLoader__.load({
     const BORDER = '0.5px solid var(--dsw-alias-border-l1, rgba(128,128,128,.28))'
     const CAPTION = 'var(--dsw-alias-label-caption, #8a8a8a)'
     const MONO = 'var(--dsw-font-markdown-code-block-small, 12px/1.5 ui-monospace, monospace)'
+    const BRAND = 'var(--dsw-alias-brand, #4f7cff)'
+    const RED = '#c0504d'
+    const GREEN = '#2f9e6e'
+
+    // `styles` is an optional host builtin (older builds expose it, some do
+    // not), so the spinner keyframes are also installable through a plain
+    // <style> tag. Both paths are best-effort: cosmetics must never throw.
+    const SPIN_CSS = [
+      '@keyframes gr-card-spin{to{transform:rotate(360deg)}}',
+      '.gr-card-spin{display:inline-block;width:10px;height:10px;border-radius:999px;',
+      'border:1.5px solid currentColor;border-top-color:transparent;',
+      'animation:gr-card-spin .8s linear infinite}',
+    ].join('')
+    const SPIN_CLASS = 'gr-card-spin'
+    let spinStylesInstalled = false
+
+    function ensureSpinStyles() {
+      if (spinStylesInstalled) return
+      spinStylesInstalled = true
+      try {
+        if (typeof styles !== 'undefined' && styles && typeof styles.insert === 'function') {
+          styles.insert(SPIN_CSS)
+          return
+        }
+        if (typeof document === 'undefined' || !document || !document.head) return
+        const tag = document.createElement('style')
+        tag.setAttribute('data-dsh-global-research', '')
+        tag.textContent = SPIN_CSS
+        document.head.appendChild(tag)
+      } catch (error) {
+        // A missing spinner must not break the card.
+      }
+    }
 
     function textOf(block) {
       if (!block || !Array.isArray(block.content)) return ''
@@ -61,6 +94,58 @@ window.__ModuleLoader__.load({
       return ids.size
     }
 
+    function domainOf(url) {
+      const match = /^https?:\/\/([^/?#\s]+)/i.exec(url || '')
+      if (!match) return ''
+      return match[1].replace(/^www\./i, '').toLowerCase()
+    }
+
+    /**
+     * Pull `- [S1] 标签 — https://…` rows out of the 参考 section. The brief is
+     * plain Markdown, so this is the only structured thing the card can mine;
+     * lines that carry no URL are dropped rather than rendered as dead links.
+     */
+    function parseSources(text) {
+      const block = section(text, '参考')
+      if (!block) return []
+      const out = []
+      const seen = new Set()
+      block.split(/\r?\n/).forEach((line) => {
+        const match = /^\s*[-*]\s*\[S(\d+)\]\s*(.+)$/.exec(line)
+        if (!match) return
+        const id = `S${match[1]}`
+        if (seen.has(id)) return
+        const body = match[2].trim()
+        const urlMatch = /https?:\/\/[^\s)>」]+/i.exec(body)
+        if (!urlMatch) return
+        const url = urlMatch[0].replace(/[.,;:]+$/, '')
+        const label = body.replace(/https?:\/\/\S+/gi, '').replace(/[—–-]\s*$/, '').trim()
+        seen.add(id)
+        out.push({ id, url, label, domain: domainOf(url) })
+      })
+      return out
+    }
+
+    function isErrorBlock(block) {
+      if (!block) return false
+      if (block.isError === true || block.error) return true
+      return [
+        block.result,
+        block.response && block.response.result,
+        block.call && block.call.result,
+      ].some((candidate) => candidate && (candidate.isError === true || candidate.error))
+    }
+
+    /** The failure text the host left in the block, trimmed to a preview size. */
+    function errorTextOf(block) {
+      if (!block) return ''
+      const source = block.error || textOf(block) ||
+        (block.result && block.result.error) ||
+        (block.call && block.call.result && block.call.result.error) || ''
+      const raw = typeof source === 'string' ? source : String((source && source.message) || source)
+      return raw.trim()
+    }
+
     function plain(markdown) {
       return markdown
         .replace(/\[S\d+\]/g, '')
@@ -93,6 +178,55 @@ window.__ModuleLoader__.load({
       }
       if (!stats.queries && !stats.pages && !stats.evidence) return undefined
       return stats
+    }
+
+    /**
+     * Older shells (and non-secure origins) have no navigator.clipboard, so a
+     * hidden textarea + execCommand stays as the fallback. Returns true when
+     * the text actually reached the clipboard.
+     */
+    function legacyCopy(text) {
+      try {
+        if (typeof document === 'undefined' || !document) return false
+        if (typeof document.createElement !== 'function') return false
+        const area = document.createElement('textarea')
+        if (!area) return false
+        area.value = text
+        area.setAttribute('readonly', '')
+        area.style.position = 'fixed'
+        area.style.top = '-1000px'
+        area.style.opacity = '0'
+        if (document.body && typeof document.body.appendChild === 'function') {
+          document.body.appendChild(area)
+        }
+        if (typeof area.select === 'function') area.select()
+        const ok = typeof document.execCommand === 'function'
+          ? Boolean(document.execCommand('copy'))
+          : false
+        if (area.parentNode && typeof area.parentNode.removeChild === 'function') {
+          area.parentNode.removeChild(area)
+        }
+        return ok
+      } catch (error) {
+        return false
+      }
+    }
+
+    function copyText(text) {
+      const nav = typeof navigator !== 'undefined' ? navigator : undefined
+      const clipboard = nav && nav.clipboard
+      if (clipboard && typeof clipboard.writeText === 'function') {
+        try {
+          const pending = clipboard.writeText(text)
+          if (pending && typeof pending.then === 'function') {
+            return pending.then(() => true, () => legacyCopy(text))
+          }
+          return Promise.resolve(true)
+        } catch (error) {
+          return Promise.resolve(legacyCopy(text))
+        }
+      }
+      return Promise.resolve(legacyCopy(text))
     }
 
     function Header(props) {
@@ -132,8 +266,27 @@ window.__ModuleLoader__.load({
       }, props.badge.label) : null,
       props.meta ? h('span', null, props.meta) : null,
       h('span', { style: { flex: 1 } }),
+      props.copyLabel
+        ? h('button', {
+          key: 'copy',
+          type: 'button',
+          title: '复制完整简报 Markdown',
+          'aria-label': '复制完整简报',
+          onClick: (event) => {
+            event.stopPropagation()
+            if (typeof props.onCopy === 'function') props.onCopy()
+          },
+          style: {
+            border: 'none', background: 'transparent', cursor: 'pointer',
+            padding: 0, font: 'inherit', whiteSpace: 'nowrap',
+            color: props.copyState === 'copied' ? GREEN
+              : props.copyState === 'failed' ? RED : CAPTION,
+          },
+        }, props.copyLabel)
+        : null,
       props.toggleLabel
         ? h('button', {
+          key: 'toggle',
           type: 'button',
           onClick: (event) => {
             event.stopPropagation()
@@ -162,12 +315,44 @@ window.__ModuleLoader__.load({
     function ResearchCard(props) {
       const block = props.block
       const [open, setOpen] = React.useState(false)
+      const [sourcesOpen, setSourcesOpen] = React.useState(false)
+      const [copyState, setCopyState] = React.useState('idle')
+      const copyTimer = React.useRef(null)
+      ensureSpinStyles()
       const args = (block && ((block.call && block.call.args) || block.args)) || {}
       const question = typeof args.question === 'string' ? args.question : ''
+
+      // 1.5s confirmation, then back to the neutral label. The timer is a ref so
+      // a second click restarts the window instead of flashing early.
+      const copyBrief = (markdown) => {
+        copyText(markdown).then((ok) => {
+          setCopyState(ok ? 'copied' : 'failed')
+          try {
+            if (copyTimer.current && typeof clearTimeout === 'function') clearTimeout(copyTimer.current)
+            copyTimer.current = setTimeout(() => setCopyState('idle'), 1500)
+            if (copyTimer.current && typeof copyTimer.current.unref === 'function') {
+              copyTimer.current.unref()
+            }
+          } catch (error) {
+            // The badge just stays visible; no timer is worth a crash.
+          }
+        })
+      }
+      const copyLabel = copyState === 'copied' ? '已复制'
+        : copyState === 'failed' ? '复制失败' : '复制'
 
       if (props.phase !== 'result') {
         return frame([
           h(Header, { key: 'h', meta: '研究中…' }),
+          h('div', {
+            key: 'running',
+            style: {
+              display: 'flex', alignItems: 'center', gap: 6,
+              color: CAPTION, fontSize: 13,
+            },
+          },
+          h('span', { key: 'spin', className: SPIN_CLASS, 'aria-hidden': true }),
+          h('span', { key: 'label' }, '研究中…')),
           h('div', {
             key: 'q',
             style: {
@@ -179,21 +364,39 @@ window.__ModuleLoader__.load({
       }
 
       const text = textOf(block || {})
-      if (block && block.isError) {
+
+      if (isErrorBlock(block)) {
+        const errorText = errorTextOf(block) || '未知错误'
+        const preview = errorText.slice(0, 200)
         return frame([
           h(Header, { key: 'h', badge: CONFIDENCE.low, meta: '失败' }),
           h('div', {
-            key: 'e',
-            style: { color: '#c0504d', whiteSpace: 'pre-wrap', fontSize: 13 },
-          }, plain(text.split('\n').slice(0, 3).join('\n')) || '研究失败'),
+            key: 'e-title',
+            style: { color: RED, fontWeight: 600, fontSize: 13 },
+          }, '研究失败'),
+          h('div', {
+            key: 'e-body',
+            style: { color: RED, whiteSpace: 'pre-wrap', fontSize: 12, lineHeight: 1.5 },
+          }, preview),
+        ])
+      }
+
+      if (!text.trim()) {
+        return frame([
+          h(Header, { key: 'h', meta: '无内容' }),
+          h('div', {
+            key: 'empty',
+            style: { color: CAPTION, fontSize: 13 },
+          }, '没有拿到简报'),
         ])
       }
 
       const confidence = confidenceOf(text)
-      const sources = sourceCount(text)
+      const sources = parseSources(text)
+      const sourceTotal = sourceCount(text) || sources.length
       const seconds = elapsedOf(block)
       const runStats = runStatsOf(text)
-      const meta = [sources > 0 ? `${sources} 个来源` : undefined,
+      const meta = [sourceTotal > 0 ? `${sourceTotal} 个来源` : undefined,
         seconds ? `${seconds}s` : undefined].filter(Boolean).join(' · ')
       const conclusion = plain(section(text, '结论'))
 
@@ -202,6 +405,9 @@ window.__ModuleLoader__.load({
           key: 'h',
           badge: confidence ? CONFIDENCE[confidence] : undefined,
           meta,
+          copyLabel,
+          copyState,
+          onCopy: () => copyBrief(text),
           toggleLabel: open ? '收起' : '展开',
           onToggle: () => setOpen(!open),
         }),
@@ -244,6 +450,54 @@ window.__ModuleLoader__.load({
             overflowY: 'auto',
           },
         }, plain(text)) : null,
+        sources.length > 0
+          ? h('div', {
+            key: 'sources',
+            style: {
+              display: 'flex', flexDirection: 'column', gap: 4,
+              borderTop: BORDER, paddingTop: 6, marginTop: 2,
+            },
+          },
+          h('button', {
+            key: 'toggle',
+            type: 'button',
+            'aria-expanded': sourcesOpen,
+            onClick: () => setSourcesOpen(!sourcesOpen),
+            style: {
+              alignSelf: 'flex-start', border: 'none', background: 'transparent',
+              color: CAPTION, cursor: 'pointer', padding: 0, font: 'inherit',
+            },
+          }, sourcesOpen ? '收起来源' : `来源 ${sourceTotal}`),
+          sourcesOpen ? h('ul', {
+            key: 'list',
+            style: {
+              margin: 0, padding: 0, listStyle: 'none',
+              display: 'flex', flexDirection: 'column', gap: 3,
+            },
+          }, sources.map((source, index) => h('li', { key: `${source.id}-${index}` },
+            h('a', {
+              href: source.url,
+              target: '_blank',
+              rel: 'noreferrer',
+              title: `${source.id} ${source.label || ''} ${source.url}`.replace(/\s+/g, ' ').trim(),
+              style: {
+                display: 'inline-flex', alignItems: 'baseline', gap: 6,
+                color: BRAND, textDecoration: 'none', minWidth: 0,
+              },
+            },
+            h('span', { key: 'id', style: { color: CAPTION } }, source.id),
+            h('span', { key: 'domain', style: { fontWeight: 600 } },
+              source.domain || source.label || '链接'),
+            source.label && source.domain && source.label !== source.domain
+              ? h('span', {
+                key: 'label',
+                style: {
+                  color: CAPTION, overflow: 'hidden', textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap', maxWidth: 220,
+                },
+              }, source.label)
+              : null)))) : null)
+          : null,
       ])
     }
 
