@@ -27,7 +27,7 @@ dsh-global-research/
 ## 测试
 
 ```powershell
-node scripts/test-all.mjs        # 全部 334 例，逐文件 spawn，失败即非零退出
+node scripts/test-all.mjs        # 全部 337 例，逐文件 spawn，失败即非零退出
 node test\pipeline.test.js       # 单文件调试
 node --check index.js client.js  # 语法检查
 ```

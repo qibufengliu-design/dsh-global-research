@@ -19,7 +19,7 @@
 ```powershell
 git clone https://github.com/qibufengliu-design/dsh-global-research.git
 cd dsh-global-research
-node scripts/test-all.mjs      # 334 例应全绿
+node scripts/test-all.mjs      # 337 例应全绿
 ```
 
 本项目零依赖，不需要 `npm install`。

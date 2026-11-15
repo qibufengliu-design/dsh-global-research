@@ -1457,7 +1457,13 @@ function compareFetcher() {
 
 test('an option with no evidence is called out instead of silently dropped (0.7.1)', async () => {
   const config = baseConfig()
-  config.__fetchPage = compareFetcher()
+  // 0.9.2 — the page text grounds the pnpm/yarn quotes but never names bun, so the
+  // directed retry for bun does fetch a fresh page and still cannot resolve it.
+  const baseFetch = compareFetcher()
+  config.__fetchPage = async (url) => ({
+    ...(await baseFetch(url)),
+    text: 'pnpm links every file from a global content-addressable store. Yarn Plug PnP removes node_modules entirely.',
+  })
   const result = await runResearch({
     question: 'pnpm 还是 yarn 还是 bun，该选哪个？',
     depth: 'quick',
@@ -1618,6 +1624,201 @@ test('a price comparison flags only the option that has no evidence (0.9.1)', as
   assert.match(result.brief, /^\| deepseek \| 约 2 元\/百万 tokens \[S\d\]/m)
 })
 
+// 0.9.2 — a zero-evidence option gets one directed query before it is reported:
+// the missing vendor page is fetched, mined for heuristic evidence, and adopted.
+const DOUBAO_QUESTION = '国内大模型 API 价格对比：qwen、豆包、deepseek 哪家便宜'
+const DOUBAO_URL = 'https://www.volcengine.com/docs/82379/doubao-pricing'
+// The price pack's own 豆包 seed; the reported case had it unreadable, which is
+// exactly how an option ends up with zero evidence in the first place.
+const DEAD_DOUBAO_SEED = 'https://www.volcengine.com/docs/82379/1099320'
+const DOUBAO_TEXT = '豆包大模型 API 按输入输出 token 计费：输入价约 0.8 元/百万 tokens，输出价约 2 元/百万 tokens。新用户每月有一定免费额度，超出后按量计费，适合国内调用场景；企业客户可申请阶梯折扣与私有部署方案，具体价格以火山方舟控制台为准。'
+
+function optionAwareEngine(queries, directedUrls = [DOUBAO_URL]) {
+  return {
+    name: 'fake',
+    available: () => true,
+    search: async (query) => {
+      const text = String(query)
+      queries.push(text)
+      // Only the directed query (option + pricing intent) returns the vendor page;
+      // plan queries keep the ordinary result set.
+      const urls = text.includes('价格 OR pricing')
+        ? directedUrls
+        : ['https://nodejs.org/1', 'https://github.com/x/y', 'https://a.com/3']
+      return urls.map((url, index) => ({
+        url, title: FAKE_TITLES[index % FAKE_TITLES.length], snippet: 'snippet', engine: 'fake', rank: index + 1,
+      }))
+    },
+  }
+}
+
+function doubaoPriceFetcher(record = []) {
+  const base = priceFetcher()
+  return async (url) => {
+    record.push(url)
+    if (url === DEAD_DOUBAO_SEED) {
+      return {
+        url, finalUrl: url, title: '豆包价格', domain: 'www.volcengine.com', text: '', ok: false, error: 'http 404',
+      }
+    }
+    if (String(url).includes('volcengine')) {
+      return {
+        url, finalUrl: url, title: '豆包大模型 API 价格', domain: 'www.volcengine.com', text: DOUBAO_TEXT, ok: true,
+      }
+    }
+    return base(url)
+  }
+}
+
+function doubaoPriceSynthReply(citationIds = ['S1']) {
+  const cited = citationIds.map((id) => `[${id}]`).join('')
+  return [
+    '## 结论',
+    `豆包价格最低，deepseek 次之，参考 ${cited}。`,
+    '',
+    '## 依据',
+    '- qwen2.5 输入价约 4 元/百万 tokens',
+    '- deepseek-chat 输入价约 2 元/百万 tokens',
+    '- 豆包 输入价约 0.8 元/百万 tokens',
+    '',
+    '## 方案对比',
+    '| 方案 | 输入价 | 备注 | 适用条件 |',
+    '| --- | --- | --- | --- |',
+    '| qwen | 约 4 元/百万 tokens | 阿里云百炼 | 中文场景 |',
+    '| 豆包 | 约 0.8 元/百万 tokens | 火山方舟 | 国内调用 |',
+    '| deepseek | 约 2 元/百万 tokens | 官方 API | 成本敏感 |',
+    '',
+    '## 行动清单',
+    '- 先用豆包跑一轮离线评测',
+    '',
+    '## 坑与风险',
+    '价格随促销调整',
+    '',
+    '## 置信度',
+    'medium',
+    '',
+    '## 未解决',
+    '无。',
+  ].join('\n')
+}
+
+function doubaoPriceResponder(options) {
+  const prompt = options.user ?? ''
+  if (prompt.includes('研究简报')) {
+    // Cite every source the synthesis prompt offers, so whichever id the newly
+    // fetched 豆包 page was assigned stays in the delivered source list.
+    const ids = [...new Set([...prompt.matchAll(/\[(S\d+)\]/g)].map((match) => match[1]))]
+    return doubaoPriceSynthReply(ids)
+  }
+  return priceResponder(options)
+}
+
+test('a zero-evidence option is retried once and adopted when the retry lands (0.9.2)', async () => {
+  const queries = []
+  const fetched = []
+  const config = baseConfig()
+  config.__engines = [optionAwareEngine(queries)]
+  config.__fetchPage = doubaoPriceFetcher(fetched)
+  const result = await runResearch({
+    question: DOUBAO_QUESTION,
+    depth: 'standard',
+    mode: 'compare',
+    strategy: resolveStrategy({ questionKind: 'pricing', depth: 'standard', question: DOUBAO_QUESTION }),
+    config,
+    llm: fakeLlm(doubaoPriceResponder),
+    selection,
+    logger: () => {},
+  })
+  const directed = queries.filter((query) => query.startsWith('豆包 '))
+  assert.equal(directed.length, 1, JSON.stringify(queries))
+  // The directed query carries the option verbatim plus the pricing intent.
+  assert.match(directed[0], /^豆包 .*价格 OR pricing/)
+  assert.ok(fetched.includes(DOUBAO_URL), JSON.stringify(fetched))
+  assert.ok(!result.gaps.some((gap) => gap.includes('选项「豆包」')), JSON.stringify(result.gaps))
+  assert.ok(result.sources.some((source) => source.url === DOUBAO_URL), JSON.stringify(result.sources))
+  assert.deepEqual(result.stats.targetedRefill, { optionsTried: 1, pagesFetched: 1, optionsResolved: 1 })
+  assert.match(result.brief, /定向回补 1 项（解决 1）/)
+})
+
+test('a directed retry that finds nothing keeps the gap and says it was tried (0.9.2)', async () => {
+  const queries = []
+  const config = baseConfig()
+  config.__engines = [optionAwareEngine(queries, [])]
+  config.__fetchPage = priceFetcher()
+  const result = await runResearch({
+    question: DOUBAO_QUESTION,
+    depth: 'standard',
+    mode: 'compare',
+    strategy: resolveStrategy({ questionKind: 'pricing', depth: 'standard', question: DOUBAO_QUESTION }),
+    config,
+    llm: fakeLlm(priceResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.equal(queries.filter((query) => query.startsWith('豆包 ')).length, 1, JSON.stringify(queries))
+  const gap = result.gaps.find((item) => item.includes('选项「豆包」'))
+  assert.ok(gap, JSON.stringify(result.gaps))
+  assert.match(gap, /已定向检索 1 次仍未获证/)
+  assert.match(result.brief, /选项「豆包」在本轮证据中没有可用来源/)
+  assert.deepEqual(result.stats.targetedRefill, { optionsTried: 1, pagesFetched: 0, optionsResolved: 0 })
+  assert.match(result.brief, /定向回补 1 项（解决 0）/)
+})
+
+test('targeted refill stays off without page budget or wall-clock room (0.9.2)', async () => {
+  // (a) quick depth: the price pack spends the whole 3-page budget on direct seeds.
+  const quickQueries = []
+  const quickConfig = baseConfig()
+  quickConfig.__engines = [optionAwareEngine(quickQueries)]
+  quickConfig.__fetchPage = doubaoPriceFetcher()
+  const quick = await runResearch({
+    question: DOUBAO_QUESTION,
+    depth: 'quick',
+    mode: 'compare',
+    config: quickConfig,
+    llm: fakeLlm(doubaoPriceResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.equal(quick.stats.pagesFetched, 3, JSON.stringify(quick.stats))
+  assert.ok(!quickQueries.some((query) => query.startsWith('豆包 ')), JSON.stringify(quickQueries))
+  assert.equal(quick.stats.targetedRefill.optionsTried, 0)
+  const quickGap = quick.gaps.find((gap) => gap.includes('选项「豆包」'))
+  assert.ok(quickGap, JSON.stringify(quick.gaps))
+  assert.ok(!quickGap.includes('已定向检索'), quickGap)
+
+  // (b) wall clock: a deep run whose remaining budget is pushed under 30s by the
+  // time the retry stage is reached must not spend a query either.
+  const realNow = Date.now
+  const start = realNow()
+  let skew = 0
+  Date.now = () => realNow() + skew
+  try {
+    const timeQueries = []
+    const timeConfig = baseConfig()
+    timeConfig.__engines = [optionAwareEngine(timeQueries)]
+    timeConfig.__fetchPage = doubaoPriceFetcher()
+    const timed = await runResearch({
+      question: DOUBAO_QUESTION,
+      depth: 'deep',
+      mode: 'compare',
+      strategy: resolveStrategy({ questionKind: 'pricing', depth: 'deep', question: DOUBAO_QUESTION }),
+      config: timeConfig,
+      llm: fakeLlm((options) => {
+        if ((options.user ?? '').includes('<untrusted>')) skew = 300000 - 15000 - (realNow() - start)
+        return doubaoPriceResponder(options)
+      }),
+      selection,
+      logger: () => {},
+    })
+    assert.ok(timed.stats.pagesFetched < 30, JSON.stringify(timed.stats))
+    assert.ok(!timeQueries.some((query) => query.startsWith('豆包 ')), JSON.stringify(timeQueries))
+    assert.equal(timed.stats.targetedRefill.optionsTried, 0)
+    assert.ok(timed.gaps.some((gap) => gap.includes('选项「豆包」')), JSON.stringify(timed.gaps))
+  } finally {
+    Date.now = realNow
+  }
+})
+
 // 0.9.1 — defect A's key: doc sections vs repositories vs plain hosts.
 test('evidenceSiteKey keys doc sections, repositories and hosts (0.9.1)', () => {
   const springAi = 'https://docs.spring.io/spring-ai/reference/api/chatclient.html'
@@ -1679,8 +1880,10 @@ test('a plan without an official query still gets a site: query from the pack (0
   assert.ok(official.length >= 1, seen.join(' | '))
   assert.ok(official.some((query) => query.startsWith('site:docs.spring.io')), seen.join(' | '))
   // The backstop spends a slot, it does not grow the query budget.
-  assert.ok(seen.length <= 6, seen.join(' | '))
-  assert.match(result.brief, /· 查询 中文语义 \d+ \/ 英文技术 \d+ \/ 官方定向 [1-9]\d*$/m)
+  // 0.9.2 — the directed retry of zero-evidence options is a page-budget step:
+  // it adds `<option> 官方 OR official` queries that were never in the plan.
+  assert.ok(seen.filter((query) => !query.includes(' OR ')).length <= 6, seen.join(' | '))
+  assert.match(result.brief, /· 查询 中文语义 \d+ \/ 英文技术 \d+ \/ 官方定向 [1-9]\d*/m)
 })
 
 test('an official query from the planner is not duplicated by the backstop (0.8.1)', async () => {
@@ -1735,7 +1938,9 @@ test('an all-semantic plan with a full query budget still gets official queries 
   assert.ok(counts.technical === 0, JSON.stringify(counts))
   assert.equal(counts.semantic + counts.technical + counts.official, result.stats.queries)
   assert.ok(seen.some((query) => query.startsWith('site:')), seen.join(' | '))
-  assert.match(result.brief, /官方定向 [1-9]\d*$/m)
+  // 0.9.2 appends `· 定向回补 N 项（解决 M）` after the query mix, so the match is
+  // on the segment, not on the end of the line.
+  assert.match(result.brief, /官方定向 [1-9]\d*/m)
 })
 
 test('officialBackstopQueries only uses declared bases/seeds (0.8.1)', () => {
@@ -1777,7 +1982,8 @@ test('an omitted mode classifies the selection question and still gets official 
     result.stats.queries,
   )
   assert.ok(seen.some((query) => query.startsWith('site:')), seen.join(' | '))
-  assert.match(result.brief, /官方定向 [1-9]\d*$/m)
+  // 0.9.2 — the directed-retry counter now follows the query mix on the same line.
+  assert.match(result.brief, /官方定向 [1-9]\d*/m)
   // The classified pack also keeps its declared sections.
   assert.match(result.brief, /## 方案对比/)
 })

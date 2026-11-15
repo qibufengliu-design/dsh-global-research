@@ -16,7 +16,7 @@
 
 每版按顺序做完，缺一项不算发布：
 
-1. **实现 + 测试**：`node scripts/test-all.mjs` 全绿（当前 334 例），新增行为必须有测试。
+1. **实现 + 测试**：`node scripts/test-all.mjs` 全绿（当前 337 例），新增行为必须有测试。
 2. **真实网络回归**：至少跑一次 `retrieval-check`（A 题：RAG 选型）与一次 B/C 题；跑不动就记录「未运行 + 原因」，不允许编造结论。结论写到 `D:\Total\docs\superpowers\specs\` 下的回归文档。
 3. **版本号**：改 `package.json.version`。
 4. **CHANGELOG**：在 `CHANGELOG.md` 顶部新增 `## [x.y.z] - YYYY-MM-DD`，分类用 `Added` / `Changed` / `Fixed` / `Removed` / `Security`；写清「为什么」和实测数字，不只写「优化了 X」。

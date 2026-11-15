@@ -14,6 +14,7 @@ research(question, depth, focus, mode, context, researchId, text, saveTo)
   ├─ 抓取分层：raw → web.fetch → Jina；EUR-Lex 走 Cellar XHTML；SO/HN 用 API 正文兜底
   ├─ 证据卡 + 引用接地（原文匹配）+ 交叉验证（多域名 / 立场）
   ├─ 缺口回补（含官方 / 法规定向 query）
+  ├─ 零证据选项定向回补（每个选项 1 条 `<选项> <核心词>` query，最多 3 项 / 3 页）
   └─ 合成简报：结论 / 依据 / 对比 / 坑 / 置信度 / 未解决 / 参考 + 统计行
 ```
 

@@ -7,6 +7,23 @@
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-15
+
+### Added
+
+- **零证据选项的定向回补**：此前 B 题「国内大模型 API 价格对比：qwen、豆包、deepseek 哪家便宜」里豆包一条可用单价都没有，「未解决」只写「零证据」，没有任何补救。现在 compare 的零证据阶段（`lib/pipeline.js` 新增 `targetedOptionRefill()`）先给每个零证据选项（≤3 个）做**一次**定向检索：query 为 `<选项> <核心词>`，核心词取 `strategy.queries.extraTemplates[0]` 的意图（pricing → `价格 OR pricing`、official-docs → `官方 文档 OR official docs`、其余 → `官方 OR official`），query 里带选项原文；`searchAll` 取前 2 条非同域且未抓过的链接，`budget.take('pages', …)` 后 `pageFetcher` 抓取，成功页并入 `state.pages` 并跑 `heuristicEvidence()`（复用 0.6.2 的逐页兜底），证据经 `groupEvidence` + `mergeClusters` 后重算该选项命中数。
+- `stats.targetedRefill: { optionsTried, pagesFetched, optionsResolved }`；`> 检索流程：` 行尾追加 `· 定向回补 N 项（解决 M）`（仅 tried>0 时）；`debugStats` 行同步加一段。
+
+### Changed
+
+- 补上了：删掉该选项的「零证据」gap，抓到的页面进入 `sources`（引用层照旧只保留被引用的来源）；仍为 0：保留原 gap 句子并追加 `（已定向检索 1 次仍未获证）`，让「零证据」不再读起来像没人查过。
+- 预算安全：整段最多 3 个选项 / 3 页 / 3 次查询，页数取 `min(3, profile.pages, budget.remaining('pages'))`；墙钟余量 <30s 或已中止直接跳过；定向查询不占 `profile.queries`（计划预算已用尽，沿用 `gapRefill` 先例）；任何失败不抛异常，只记 `state.refillQueries`。
+
+### Tests
+
+- `test/pipeline.test.js` +3：豆包零证据 + 定向页可抓 → 不再进 gaps、页面进 sources、`optionsResolved === 1`；定向检索全空 → gap 保留且含「已定向检索 1 次仍未获证」、`optionsResolved === 0`；页预算耗尽或墙钟余量 <30s → 一次定向查询都不发。
+- 既有 4 条断言随新行为微调：`官方定向` 正则去掉行尾锚点（流程行末尾多了定向回补段）、计划查询计数排除 ` OR ` 定向 query、0.7.1 零证据用例的假页面不再提到 `bun`（否则定向回补真把 bun 补上了）。测试总数 334 → 337。
+
 ## [0.9.1] - 2026-11-15
 
 ### Changed
