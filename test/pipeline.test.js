@@ -20,6 +20,25 @@ function fakeLlm(responder) {
   }
 }
 
+/**
+ * 0.9.5 — an awaiting variant of fakeLlm, so a test can hold one evidence call
+ * in flight while another starts (the parallel-extraction regression test).
+ * The sync helper above stays exactly as it was: most tests rely on a responder
+ * that returns a string immediately.
+ */
+function asyncFakeLlm(responder) {
+  return {
+    stream(options) {
+      const user = options.messages?.[0]?.content?.[0]?.text ?? ''
+      return (async function* emit() {
+        const text = await responder({ ...options, user })
+        yield { type: 'text-delta', text }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      })()
+    },
+  }
+}
+
 function analysisReply() {
   return JSON.stringify({
     subQuestions: [{ q: 'Node LTS 版本有哪些？', why: '确定基线', evidence: 'docs' }],
@@ -79,12 +98,12 @@ const FAKE_TITLES = [
   'Node LTS community discussion',
 ]
 
-function fakeEngine(urls) {
+function fakeEngine(urls, titles = FAKE_TITLES) {
   return {
     name: 'fake',
     available: () => true,
     search: async () => urls.map((url, index) => ({
-      url, title: FAKE_TITLES[index % FAKE_TITLES.length], snippet: 'snippet', engine: 'fake', rank: index + 1,
+      url, title: titles[index % titles.length], snippet: 'snippet', engine: 'fake', rank: index + 1,
     })),
   }
 }
@@ -1860,8 +1879,10 @@ test('targeted refill says why it was skipped without page budget or wall-clock 
   assert.ok(!quickGap.includes('已定向检索'), quickGap)
   assert.match(quick.brief, /定向回补跳过（预算不足）/)
 
-  // (b) wall clock: a deep run whose remaining budget is pushed under 30s by the
-  // time the retry stage is reached must not spend a query either.
+  // (b) wall clock: a deep run whose remaining budget is pushed under the 20s
+  // floor by the time the retry stage is reached must not spend a query either.
+  // 0.9.5 — the reserve moved to 45s (deep wall clock 360s), so 15s left still
+  // skips; the 30s case now degrades to one query and is covered separately.
   const realNow = Date.now
   const start = realNow()
   let skew = 0
@@ -1878,7 +1899,7 @@ test('targeted refill says why it was skipped without page budget or wall-clock 
       strategy: resolveStrategy({ questionKind: 'pricing', depth: 'deep', question: DOUBAO_QUESTION }),
       config: timeConfig,
       llm: fakeLlm((options) => {
-        if ((options.user ?? '').includes('<untrusted>')) skew = 300000 - 15000 - (realNow() - start)
+        if ((options.user ?? '').includes('<untrusted>')) skew = 360000 - 15000 - (realNow() - start)
         return doubaoPriceResponder(options)
       }),
       selection,
@@ -1896,6 +1917,193 @@ test('targeted refill says why it was skipped without page budget or wall-clock 
   } finally {
     Date.now = realNow
   }
+})
+
+/**
+ * 0.9.5 — evidence extraction is two batches at a time. The fake model holds
+ * each batch for a while and records how many are in flight, so the limit is
+ * observable instead of assumed, and the ordered merge is checked by making the
+ * first batch resolve last: clusters must still come back in batch order.
+ */
+test('evidence batches extract two at a time and merge in batch order (0.9.5)', async () => {
+  const words = ['zebracrossing', 'quartzite', 'mangosteen', 'violinist', 'cactusflower', 'planetesimal', 'harbormaster']
+  const urls = words.map((_, index) => `https://site-${index}.example.com/page`)
+  const inFlight = { calls: [], completions: [], live: 0, max: 0 }
+  const responder = async (options) => {
+    const prompt = options.user ?? ''
+    if (!prompt.includes('从下列页面中提取可引用的证据')) return defaultResponder(options)
+    const promptUrls = [...prompt.matchAll(/\[页面 \d+\] .*? — (https?:\/\/\S+?)（/g)].map((match) => match[1])
+    const call = inFlight.calls.length
+    inFlight.calls.push(promptUrls)
+    inFlight.live += 1
+    inFlight.max = Math.max(inFlight.max, inFlight.live)
+    // The first batch settles last, so a completion-ordered merge would put it
+    // behind the second one.
+    await new Promise((resolve) => setTimeout(resolve, call === 0 ? 40 : 5))
+    inFlight.live -= 1
+    inFlight.completions.push(call)
+    return JSON.stringify(promptUrls.map((url, index) => {
+      const word = words[Number(url.match(/site-(\d+)/)?.[1] ?? 0)]
+      return { claim: `Claim ${word}`, quote: 'Node 22 entered LTS in October 2025.', source: index, type: 'docs', stance: 'support' }
+    }))
+  }
+  const config = baseConfig()
+  config.__engines = [fakeEngine(urls, words.map((word) => `Node ${word} page`))]
+  let observedClusters = null
+  const result = await runResearch({
+    question: 'Node 22 是 LTS 吗？项目该用哪个版本',
+    depth: 'standard',
+    config,
+    llm: asyncFakeLlm(responder),
+    selection,
+    logger: () => {},
+    onState: (snapshot) => { observedClusters = snapshot.clusters },
+  })
+
+  assert.equal(result.partial, false)
+  // Two batches in flight, never three, and more than one batch actually ran.
+  assert.equal(inFlight.max, 2, `max in flight: ${inFlight.max}`)
+  assert.ok(inFlight.calls.length >= 2, JSON.stringify(inFlight.calls))
+  assert.notDeepEqual(inFlight.completions, [...inFlight.completions].sort((a, b) => a - b), 'batches completed out of order')
+  // Observability counters describe the same batches and item sources.
+  assert.equal(result.stats.evidenceBatches, inFlight.calls.length)
+  assert.equal(result.stats.evidenceModelItems, words.length)
+  assert.equal(result.stats.evidenceHeuristicItems, 0)
+  // Order: batch index, not completion order. Each prompt lists its pages in
+  // order, so concatenating the prompts in call order is the serial order.
+  const expected = inFlight.calls.flat().map((url) => `Claim ${words[Number(url.match(/site-(\d+)/)?.[1] ?? 0)]}`)
+  assert.deepEqual(observedClusters.map((cluster) => cluster.claim), expected)
+})
+
+test('a failing evidence batch falls back to heuristics instead of aborting the run (0.9.5)', async () => {
+  const responder = (options) => {
+    if ((options.user ?? '').includes('从下列页面中提取可引用的证据')) throw new Error('provider responded 429')
+    return defaultResponder(options)
+  }
+  const result = await runResearch({
+    question: 'Node 22 是 LTS 吗？项目该用哪个版本',
+    depth: 'standard',
+    config: baseConfig(),
+    llm: fakeLlm(responder),
+    selection,
+    logger: () => {},
+  })
+  // The call failed, so the model contributed nothing; the per-page heuristic
+  // kept the run alive instead of surfacing as 运行超时/中断.
+  assert.equal(result.partial, false)
+  assert.equal(result.stats.evidenceModelItems, 0)
+  assert.ok(result.stats.evidenceHeuristicItems >= 1, JSON.stringify(result.stats))
+  assert.ok(result.sources.length >= 1, JSON.stringify(result.sources))
+})
+
+test('a 30s remainder degrades the targeted retry to one query instead of skipping (0.9.5)', async () => {
+  const realNow = Date.now
+  const start = realNow()
+  let skew = 0
+  Date.now = () => realNow() + skew
+  try {
+    const queries = []
+    const config = baseConfig()
+    config.__engines = [optionAwareEngine(queries)]
+    config.__fetchPage = doubaoPriceFetcher()
+    const result = await runResearch({
+      question: DOUBAO_QUESTION,
+      depth: 'deep',
+      mode: 'compare',
+      strategy: resolveStrategy({ questionKind: 'pricing', depth: 'deep', question: DOUBAO_QUESTION }),
+      config,
+      llm: fakeLlm((options) => {
+        if ((options.user ?? '').includes('<untrusted>')) skew = 360000 - 30000 - (realNow() - start)
+        return doubaoPriceResponder(options)
+      }),
+      selection,
+      logger: () => {},
+    })
+    // 30s is under the 45s guard but over the 20s floor: one directed query runs.
+    assert.ok(queries.some((query) => query.startsWith('豆包 ')), JSON.stringify(queries))
+    assert.equal(result.stats.targetedRefill.skipped, null, JSON.stringify(result.stats.targetedRefill))
+    assert.equal(result.stats.targetedRefill.optionsTried, 1, JSON.stringify(result.stats.targetedRefill))
+    assert.match(result.brief, /定向回补 1 项/)
+    const gap = result.gaps.find((entry) => entry.includes('选项「豆包」'))
+    if (gap) assert.doesNotMatch(gap, /剩余时间不足，未做定向检索/)
+  } finally {
+    Date.now = realNow
+  }
+})
+
+/**
+ * 0.9.5 — adoption diagnosis: read-but-unused pages are classified, and the
+ * 参考 section says why instead of only how many.
+ */
+test('read-but-unused pages are classified by reason in stats and the brief (0.9.5)', async () => {
+  // Four readable pages with distinct claims (so they stay four clusters), one
+  // page under the 120-char gate, and one fetch failure. The synthesizer cites
+  // only S1/S2, so the other two evidence-bearing pages are dropped by citation
+  // hygiene — the three failure modes must not be conflated.
+  const texts = {
+    'https://alpha.example.com/node-lts': 'Node 22 entered long term support in October 2025. The release stays supported through April 2027, after which it moves to maintenance only. Teams planning a backend service should treat that date as a hard upgrade deadline.',
+    'https://beta.example.com/release-plan': 'Node 24 is the current release line for early adopters. It becomes long term support in April 2026, one year after its first stable cut, and keeps ordinary security patches for two more years.',
+    'https://gamma.example.com/engines-field': 'Pin the runtime in the engines field of package.json so continuous integration and developer machines resolve the same major version. Without the pin, a minor upgrade can change native addon behaviour silently.',
+    'https://delta.example.com/upgrade-window': 'Schedule the runtime upgrade one quarter before the support deadline. Leave two sprints for regression testing and for rebuilding native dependencies against the new application binary interface.',
+    'https://thin.example.com/note': 'Node 22 is LTS.',
+    'https://broken.example.com/page': null,
+  }
+  const urls = Object.keys(texts)
+  const titles = [
+    'Node 22 LTS schedule',
+    'Node 24 release plan',
+    'engines field guidance',
+    'upgrade window playbook',
+    'short note about LTS',
+    'broken fetch page',
+  ]
+  const config = baseConfig()
+  config.__engines = [fakeEngine(urls, titles)]
+  config.__fetchPage = async (url) => {
+    const text = texts[url]
+    if (!text) return { url, ok: false, reason: 'HTTP 403' }
+    return {
+      url, finalUrl: url, title: `page ${url}`, domain: new URL(url).hostname,
+      text, ok: true,
+    }
+  }
+  const responder = (options) => {
+    const prompt = options.user ?? ''
+    // The model extracts nothing: evidence comes from the per-page heuristic
+    // fallback, and droppedModelNoClaim stays 0 because no page is left without
+    // a claim-capable paragraph.
+    if (prompt.includes('从下列页面中提取可引用的证据')) return '[]'
+    if (prompt.includes('研究简报')) return synthReply()
+    return defaultResponder(options)
+  }
+  const result = await runResearch({
+    question: 'Node 22 是 LTS 吗？项目该用哪个版本',
+    depth: 'standard',
+    config,
+    llm: fakeLlm(responder),
+    selection,
+    logger: () => {},
+  })
+  const stats = result.stats
+  assert.equal(stats.fetchFailed, 1, JSON.stringify(stats))
+  assert.equal(stats.readable, 5, JSON.stringify(stats))
+  assert.equal(stats.adopted, 2, JSON.stringify(stats))
+  assert.equal(stats.droppedUncited, 2, JSON.stringify(stats))
+  assert.equal(stats.droppedBelowMinChars, 1, JSON.stringify(stats))
+  assert.equal(stats.droppedModelNoClaim, 0, JSON.stringify(stats))
+  assert.equal(stats.droppedNoEvidence, 1, JSON.stringify(stats))
+  // Every read page lands in exactly one bucket next to the adopted ones.
+  assert.equal(stats.adopted + stats.droppedUncited + stats.droppedNoEvidence, stats.readable)
+  assert.match(result.brief, /另有 3 个页面被读取但未采用/)
+  assert.match(result.brief, /未采用原因：/)
+  assert.match(result.brief, /低于字数门槛 1 段/)
+  assert.match(result.brief, /引用校验剔除 2 段/)
+  assert.match(result.brief, /另有 1 篇抓取失败/)
+  // Evidence observability travels with the same run: two batches (3 + 2 pages),
+  // no model items, four heuristic items.
+  assert.equal(stats.evidenceBatches, 2, JSON.stringify(stats))
+  assert.equal(stats.evidenceModelItems, 0, JSON.stringify(stats))
+  assert.equal(stats.evidenceHeuristicItems, 4, JSON.stringify(stats))
 })
 
 // 0.9.1 — defect A's key: doc sections vs repositories vs plain hosts.

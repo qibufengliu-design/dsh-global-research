@@ -166,7 +166,13 @@ test('depth bias only moves an auto-derived request, then clamps to the pack', (
     'standard',
   )
   // The shared profile table (and the deep wall-clock) is never rewritten.
-  assert.equal(DEPTH_PROFILES.deep.wallMs, 300000)
+  // 0.9.5 — the wall budget grew to 120/240/360s after a standard run hit the
+  // 180s ceiling during evidence extraction; the ordering is the invariant.
+  assert.equal(DEPTH_PROFILES.quick.wallMs, 120000)
+  assert.equal(DEPTH_PROFILES.standard.wallMs, 240000)
+  assert.equal(DEPTH_PROFILES.deep.wallMs, 360000)
+  assert.ok(DEPTH_PROFILES.quick.wallMs < DEPTH_PROFILES.standard.wallMs)
+  assert.ok(DEPTH_PROFILES.standard.wallMs < DEPTH_PROFILES.deep.wallMs)
   assert.equal(DEPTH_PROFILES.quick.queries, 2)
 })
 

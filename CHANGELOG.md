@@ -7,6 +7,28 @@
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-11-15
+
+> 起因是一次 standard「国内大模型 API 价格对比」真实运行：180s 预算下拆题 26s / 检索 49s / **证据 86s** / 合成 14s，定向回补因「剩余时间不足」没跑，最终「可读 10 篇 · 采用 1 篇、豆包零证据」。本版把证据提取并行化并上调墙钟，同时补上「采用率为什么是 1」的诊断信号。
+
+### Added
+
+- **证据提取可观测**：`stats.evidenceBatches` / `evidenceModelItems` / `evidenceHeuristicItems`（按批 index 计数，重试不重复计），debugStats 行新增 `· 证据 批 b / 模型 m / 启发式 h`——「采用 1」到底是「模型没给论断」还是「页面太薄」，一眼可分；`extractEvidence()` 新增可选 `tally` 参数。
+- **采用率诊断**：「参考」里在 `- 另有 N 个页面被读取但未采用（域名）` 之后补一行原因分布 `- 未采用原因：低于字数门槛 X 段 · 模型未给论断 Y 段 · 已过期 Z 段 · 引用校验剔除 U 段；另有 F 篇抓取失败`（0 项省略）。`stats` 相应新增 `fetchFailed` / `droppedNoEvidence` / `droppedBelowMinChars` / `droppedModelNoClaim` / `droppedStale` / `droppedUncited`，按页逐一分类（复用 `heuristicEvidence()` 的 60/120 字门槛），`readable` 改为按 `canonicalKey` 去重后计数。
+
+### Changed
+
+- **证据阶段并行（性能）**：`lib/pipeline.js` 新增 `EVIDENCE_CONCURRENCY = 2` 与 `extractEvidenceInBatches()`，主证据阶段和 `gapRefill()` 都改为「最多 2 批在飞」，结果按批 index 回填后按顺序 `groupEvidence()` + `mergeClusters()`，`[S#]` 编号与「参考」顺序与串行完全一致。standard 的 10 页（batch 3→4 批）理论耗时从 ~4×t 降到 ~2×t：0.9.3 实测 86s → 预计 ~45-50s。
+- **单批失败不再拖垮整轮**：证据 `jsonCall` 包了 try/catch，非 abort 的失败（典型是双批并发下的 provider 429）记日志后按逐页启发式兜底，与「模型没给论断」同一条降级路径；`signal` aborted 仍原样抛出，墙钟取消语义不变。
+- **墙钟预算上调**：`DEPTH_PROFILES.wallMs` quick 90s→120s、standard 180s→240s、deep 300s→360s（保持 quick<standard<deep）；`index.js` 工具超时仍是 `max(config.timeoutMs, deep.wallMs) + 20s`，下限随之到 380s。
+- **定向回补时间守卫 30s→45s**：并新增降级路径——剩余 <45s 但 ≥20s 且还有页预算时只跑 1 条 query、最多 1 页（`TARGETED_REFILL.degradedMinRemainingMs = 20000`），跑完即停；剩余 <20s 才仍写「剩余时间不足」跳过标注。
+
+### Tests
+
+- `test/pipeline.test.js` +4、改写 1：并发提取（假模型观测到同时 2 批在飞，完成顺序与批次顺序不同、合并结果仍按批序）、单批失败降级为启发式、30s 余量降级为 1 条 query、`droppedNoEvidence`/原因分布统计与简报原因句；0.9.3 的墙钟跳过用例 skew 改按 360s 预算计。
+- `test/strategy.test.js`：墙钟断言改为 120000/240000/360000，并加 quick<standard<deep 顺序断言。
+- 测试总数 352（19 个测试文件，本版新增 4 例），`node scripts/test-all.mjs` 全绿。
+
 ## [0.9.4] - 2026-11-15
 
 > `v0.9.3` 的 tag 指向材料粘贴区提交（`dc0b8a0`）；本版是紧随其后的定向回补修复（`e1f4286`）。已推送的 tag 不移动，按 SemVer 另发一个补丁版本。
