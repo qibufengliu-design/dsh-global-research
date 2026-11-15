@@ -41,8 +41,21 @@ test('synthesis prompt requires a citation on every numeric table value', () => 
   assert.ok(prompt.includes('「## 方案对比」表里每个含数字的单元格'), 'numeric-cell citation rule is missing')
   assert.ok(prompt.includes('必须紧跟 [S#]'), 'the [S#] requirement is missing')
   assert.ok(prompt.includes('未核实'), 'the unsourced-number placeholder is missing')
-  // The existing table limits must survive the new rule.
-  assert.ok(prompt.includes('表格最多 3 行、每格不超过 20 字'), 'the table size limits changed')
+  // The existing table limits must survive the new rule, and 0.9.6 replaces the
+  // blanket "at most 3 rows" cap with "one row per candidate" — the cap was what
+  // pushed the synthesizer into merging two candidates into one cell.
+  assert.ok(prompt.includes('每格不超过 20 字'), 'the per-cell size limit changed')
+  assert.ok(prompt.includes('表格每行一个方案'), 'the one-row-per-candidate rule is missing')
+  assert.ok(!prompt.includes('表格最多 3 行'), 'the flat row cap must not come back')
+})
+
+test('a compare prompt forbids merging two candidates into one table row (0.9.6)', () => {
+  const prompt = synthPrompt(synthArgs())
+  assert.ok(prompt.includes('每个候选必须独立一行'), 'the per-candidate row rule is missing')
+  assert.ok(prompt.includes('禁止'), 'the merge prohibition is missing')
+  assert.ok(prompt.includes('qwen / 豆包 API'), 'the counter-example is missing')
+  assert.ok(prompt.includes('未核实（无来源）'), 'the missing-price placeholder is missing')
+  assert.ok(prompt.includes('不要删行、不要并格'), 'the keep-the-row rule is missing')
 })
 
 test('synthesis prompt forces a currency column and forbids cross-currency comparison', () => {

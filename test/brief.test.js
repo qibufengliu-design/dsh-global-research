@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ACTION_CHECKLIST_HEADING, appendConflictSection, appendReferences, appendRetrievalFlow, appendStats, applyZeroEvidenceOptions, assignSourceIds, buildResult,
-  computeConfidence, ensureSections, fallbackBrief, formatRetrievalFlow, gradeSource, markUnsourcedNumbers, missingSections, requiredSectionsFor,
+  checkCompareRows, computeConfidence, ensureSections, fallbackBrief, formatRetrievalFlow, gradeSource, markUnsourcedNumbers, missingSections, requiredSectionsFor,
   UNSOURCED_NUMBER_MARK, validateCitations, zeroEvidenceGapText,
 } from '../lib/brief.js'
 import { findSelfContradictions } from '../lib/assertions.js'
@@ -779,4 +779,108 @@ test('uncited numbers in the compare table are marked, cited ones are left alone
   })
   assert.match(withTable.brief, /^\| A \| 0\.2 元（无来源） \|$/m)
   assert.match(withTable.brief, /^\| B \| 0\.3 元 \[S1\] \|$/m)
+})
+// 0.9.6 — the compare table must give every declared candidate its own row.
+// A merged `qwen / 豆包 API` cell hides a candidate from the conclusion, so the
+// check names it instead of letting the table read as complete.
+function compareTable(rows, header = '| 方案 | 价格 |') {
+  return ['## 方案对比', header, '| --- | --- |', ...rows, '', '## 置信度', 'medium'].join('\n')
+}
+
+test('a candidate merged into another row is named under the compare table (0.9.6)', () => {
+  const brief = compareTable([
+    '| deepseek-flash | 0.5 元/百万 tokens [S1] |',
+    '| qwen / 豆包 API | 未核实 |',
+  ])
+  const stats = {}
+  const sink = {}
+  const complete = checkCompareRows(brief, { options: ['deepseek-flash', 'qwen', '豆包'], stats, sink })
+  assert.equal(complete, false)
+  assert.equal(stats.compareRowsComplete, false)
+  assert.deepEqual(sink.missing, ['qwen', '豆包'])
+  assert.match(sink.brief, /^> 注意：qwen 未作为独立行出现（价格未取得），下表结论不含该候选。$/m)
+  assert.match(sink.brief, /^> 注意：豆包 未作为独立行出现（价格未取得），下表结论不含该候选。$/m)
+  // The note sits after the table, before the next section.
+  assert.ok(sink.brief.indexOf('> 注意：') < sink.brief.indexOf('## 置信度'))
+  // A merged row is never credited to either of its members.
+  assert.doesNotMatch(sink.brief, /> 注意：deepseek-flash/)
+  // Idempotent: the delivered brief can be re-checked without piling up notes.
+  const again = {}
+  assert.equal(checkCompareRows(sink.brief, { options: ['deepseek-flash', 'qwen', '豆包'], sink: again }), false)
+  assert.equal(again.brief.match(/> 注意：豆包/g).length, 1)
+})
+
+test('an independent row with an unverified price is marked as unsourced (0.9.6)', () => {
+  const brief = compareTable([
+    '| deepseek-flash | 0.5 元/百万 tokens [S1] |',
+    '| 豆包 | 未核实 |',
+    '| qwen | — |',
+    '| kimi | 无证据 |',
+  ])
+  const stats = {}
+  const sink = {}
+  assert.equal(checkCompareRows(brief, { options: ['deepseek-flash', '豆包', 'qwen', 'kimi'], stats, sink }), true)
+  assert.equal(stats.compareRowsComplete, true)
+  assert.deepEqual(sink.missing, [])
+  assert.match(sink.brief, /^\| 豆包 \| 未核实（无来源） \|$/m)
+  assert.match(sink.brief, /^\| qwen \| —（无来源） \|$/m)
+  // 无证据 already says "there is no evidence"; do not stack a second label.
+  assert.match(sink.brief, /^\| kimi \| 无证据 \|$/m)
+  assert.match(sink.brief, /^\| deepseek-flash \| 0\.5 元\/百万 tokens \[S1\] \|$/m)
+  assert.doesNotMatch(sink.brief, /^> 注意：/m)
+})
+
+test('a complete compare table is left untouched (0.9.6)', () => {
+  const brief = compareTable([
+    '| deepseek-flash | 0.5 元/百万 tokens [S1] |',
+    '| 豆包 | 0.8 元/百万 tokens [S2] |',
+  ])
+  const stats = { compareRowsComplete: undefined }
+  const sink = {}
+  assert.equal(checkCompareRows(brief, { options: ['deepseek-flash', '豆包'], stats, sink }), true)
+  assert.equal(stats.compareRowsComplete, true)
+  assert.equal(sink.brief, brief)
+  assert.deepEqual(sink.unsourced, [])
+
+  // A transposed table (candidates as columns) still gets its price cells marked,
+  // because that layout is legitimate.
+  const transposed = ['## 方案对比', '| 维度 | 豆包 | qwen |', '| --- | --- | --- |', '| 价格 | 未核实 | 0.4 元 [S1] |', '', '## 置信度', 'medium'].join('\n')
+  const transposedSink = {}
+  assert.equal(checkCompareRows(transposed, { options: ['豆包', 'qwen'], sink: transposedSink }), true)
+  assert.match(transposedSink.brief, /^\| 价格 \| 未核实（无来源） \| 0\.4 元 \[S1\] \|$/m)
+
+  // No table and no compare heading: nothing to judge, and no crash.
+  assert.equal(checkCompareRows('## 结论\n纯文字。', { options: ['a'], sink: {} }), true)
+  assert.equal(checkCompareRows('', { options: [], sink: {} }), true)
+})
+
+// 0.9.6 — a directed refill source that the synthesizer did not cite is kept in
+// the reference list (up to two) and labelled, instead of vanishing: the 0.9.5
+// complaint was that the vendor page was fetched and then invisible.
+test('an uncited refill source is kept and labelled instead of dropped (0.9.6)', () => {
+  const sources = [
+    { id: 'S1', title: 'Alpha', url: 'https://alpha.example.com/x' },
+    { id: 'S2', title: '豆包价格', url: 'https://www.volcengine.com/docs/82379/doubao-pricing' },
+    { id: 'S3', title: 'Gamma', url: 'https://gamma.example.com/y' },
+    { id: 'S4', title: 'Delta', url: 'https://delta.example.com/z' },
+  ]
+  const refillUrls = [
+    'https://www.volcengine.com/docs/82379/doubao-pricing',
+    'https://gamma.example.com/y',
+    'https://delta.example.com/z',
+  ]
+  const kept = validateCitations('结论 [S1]', sources, { refillUrls, maxKept: 2 })
+  assert.equal(kept.cited, 1)
+  assert.equal(kept.kept, 2, 'at most two unused refill sources are retained')
+  assert.deepEqual(kept.sources.map((source) => source.url), [
+    'https://alpha.example.com/x',
+    'https://www.volcengine.com/docs/82379/doubao-pricing',
+    'https://gamma.example.com/y',
+  ])
+  const rendered = appendReferences(kept.brief, kept.sources)
+  assert.match(rendered, /^- \[S2\] 豆包价格 .*（官方）（已检索，未被采用）$/m)
+  assert.match(rendered, /^- \[S3\] Gamma .*（已检索，未被采用）$/m)
+  assert.doesNotMatch(rendered, /^- \[S1\] .*已检索，未被采用/m)
+  // Without a refill hint nothing is retained — citation hygiene is unchanged.
+  assert.equal(validateCitations('结论 [S1]', sources).sources.length, 1)
 })

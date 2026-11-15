@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { runResearch, groupEvidence, looksLikeFollowUp, extractEvidence, pickDocBases, compareOptions, countOptionHits, evidenceSiteKey, officialBackstopQueries } from '../lib/pipeline.js'
+import { runResearch, groupEvidence, looksLikeFollowUp, extractEvidence, pickDocBases, compareOptions, countOptionHits, evidenceSiteKey, officialBackstopQueries, PRICING_HOSTS, pricingHostFor, pricingHostOfUrl, pricingTargetQueries, isPricingEvidencePage, isPricingScenario } from '../lib/pipeline.js'
 import { downgradeConfidence } from '../lib/brief.js'
 import { resolveStrategy } from '../lib/strategy.js'
 import { dedupeHits, rankHits } from '../lib/util.js'
@@ -1652,6 +1652,13 @@ const DOUBAO_URL = 'https://www.volcengine.com/docs/82379/doubao-pricing'
 const DEAD_DOUBAO_SEED = 'https://www.volcengine.com/docs/82379/1099320'
 const DOUBAO_TEXT = '豆包大模型 API 按输入输出 token 计费：输入价约 0.8 元/百万 tokens，输出价约 2 元/百万 tokens。新用户每月有一定免费额度，超出后按量计费，适合国内调用场景；企业客户可申请阶梯折扣与私有部署方案，具体价格以火山方舟控制台为准。'
 
+// 0.9.6 — a pricing scenario now builds its directed query from PRICING_HOSTS
+// (`site:volcengine.com 豆包 价格 tokens 百万`) instead of the generic
+// `价格 OR pricing` core. Both shapes stay accepted so the non-pricing directed
+// path keeps its coverage.
+const DIRECTED_PRICE_QUERY = /(?:价格 OR pricing|价格 tokens 百万)/
+const DOUBAO_DIRECTED_QUERY = 'site:volcengine.com 豆包 价格 tokens 百万'
+
 function optionAwareEngine(queries, directedUrls = [DOUBAO_URL]) {
   return {
     name: 'fake',
@@ -1661,7 +1668,7 @@ function optionAwareEngine(queries, directedUrls = [DOUBAO_URL]) {
       queries.push(text)
       // Only the directed query (option + pricing intent) returns the vendor page;
       // plan queries keep the ordinary result set.
-      const urls = text.includes('价格 OR pricing')
+      const urls = DIRECTED_PRICE_QUERY.test(text)
         ? directedUrls
         : ['https://nodejs.org/1', 'https://github.com/x/y', 'https://a.com/3']
       return urls.map((url, index) => ({
@@ -1748,10 +1755,11 @@ test('a zero-evidence option is retried once and adopted when the retry lands (0
     selection,
     logger: () => {},
   })
-  const directed = queries.filter((query) => query.startsWith('豆包 '))
+  const directed = queries.filter((query) => DIRECTED_PRICE_QUERY.test(query))
   assert.equal(directed.length, 1, JSON.stringify(queries))
-  // The directed query carries the option verbatim plus the pricing intent.
-  assert.match(directed[0], /^豆包 .*价格 OR pricing/)
+  // The directed query names the vendor's own price host (0.9.6) so the page it
+  // lands on is the one that actually carries the missing price.
+  assert.equal(directed[0], DOUBAO_DIRECTED_QUERY)
   assert.ok(fetched.includes(DOUBAO_URL), JSON.stringify(fetched))
   assert.ok(!result.gaps.some((gap) => gap.includes('选项「豆包」')), JSON.stringify(result.gaps))
   assert.ok(result.sources.some((source) => source.url === DOUBAO_URL), JSON.stringify(result.sources))
@@ -1775,7 +1783,7 @@ test('a directed retry that finds nothing keeps the gap and says it was tried (0
     selection,
     logger: () => {},
   })
-  assert.equal(queries.filter((query) => query.startsWith('豆包 ')).length, 1, JSON.stringify(queries))
+  assert.equal(queries.filter((query) => query === DOUBAO_DIRECTED_QUERY).length, 1, JSON.stringify(queries))
   const gap = result.gaps.find((item) => item.includes('选项「豆包」'))
   assert.ok(gap, JSON.stringify(result.gaps))
   assert.match(gap, /已定向检索 1 次仍未获证/)
@@ -1803,7 +1811,7 @@ function budgetFillingEngine(queries, directedUrls = [DOUBAO_URL]) {
     search: async (query) => {
       const text = String(query)
       queries.push(text)
-      if (text.includes('价格 OR pricing')) {
+      if (DIRECTED_PRICE_QUERY.test(text)) {
         return directedUrls.map((url, index) => ({
           url, title: '豆包大模型 API 价格', snippet: 'snippet', engine: 'fake', rank: index + 1,
         }))
@@ -1868,7 +1876,7 @@ test('targeted refill says why it was skipped without page budget or wall-clock 
     logger: () => {},
   })
   assert.equal(quick.stats.pagesFetched, 3, JSON.stringify(quick.stats))
-  assert.ok(!quickQueries.some((query) => query.startsWith('豆包 ')), JSON.stringify(quickQueries))
+  assert.ok(!quickQueries.some((query) => DIRECTED_PRICE_QUERY.test(query)), JSON.stringify(quickQueries))
   // 0.9.3 — the skip is reported, not swallowed: the option entered the retry even
   // though no page was left to send its query.
   assert.equal(quick.stats.targetedRefill.skipped, 'budget', JSON.stringify(quick.stats.targetedRefill))
@@ -1906,7 +1914,7 @@ test('targeted refill says why it was skipped without page budget or wall-clock 
       logger: () => {},
     })
     assert.ok(timed.stats.pagesFetched < 30, JSON.stringify(timed.stats))
-    assert.ok(!timeQueries.some((query) => query.startsWith('豆包 ')), JSON.stringify(timeQueries))
+    assert.ok(!timeQueries.some((query) => DIRECTED_PRICE_QUERY.test(query)), JSON.stringify(timeQueries))
     assert.equal(timed.stats.targetedRefill.skipped, 'time', JSON.stringify(timed.stats.targetedRefill))
     assert.ok(timed.stats.targetedRefill.optionsTried >= 1, JSON.stringify(timed.stats.targetedRefill))
     const timedGap = timed.gaps.find((gap) => gap.includes('选项「豆包」'))
@@ -2020,7 +2028,7 @@ test('a 30s remainder degrades the targeted retry to one query instead of skippi
       logger: () => {},
     })
     // 30s is under the 45s guard but over the 20s floor: one directed query runs.
-    assert.ok(queries.some((query) => query.startsWith('豆包 ')), JSON.stringify(queries))
+    assert.ok(queries.includes(DOUBAO_DIRECTED_QUERY), JSON.stringify(queries))
     assert.equal(result.stats.targetedRefill.skipped, null, JSON.stringify(result.stats.targetedRefill))
     assert.equal(result.stats.targetedRefill.optionsTried, 1, JSON.stringify(result.stats.targetedRefill))
     assert.match(result.brief, /定向回补 1 项/)
@@ -2393,4 +2401,75 @@ test('a concept brief keeps the checklist optional: 无 placeholder, no notch (0
   assert.match(without.brief, /^## 行动清单\n- 无$/m)
   // Optional for concept: the placeholder appears, but confidence is unchanged.
   assert.equal(without.confidence, withList.confidence)
+})
+
+// 0.9.6 — the directed refill for a price question now aims at the vendor's own
+// pricing host. The 0.9.5 regression was a generic `豆包 官方 价格` query landing
+// on a listing page that the citation check then dropped.
+test('pricing options map to their vendor price host and a scoped query (0.9.6)', () => {
+  assert.equal(pricingHostFor('豆包'), 'volcengine.com')
+  assert.equal(pricingHostFor('doubao'), 'volcengine.com')
+  assert.equal(pricingHostFor('火山方舟'), 'volcengine.com')
+  assert.equal(pricingHostFor('Qwen'), 'help.aliyun.com')
+  assert.equal(pricingHostFor('通义千问'), 'help.aliyun.com')
+  assert.equal(pricingHostFor('deepseek'), 'api-docs.deepseek.com')
+  assert.equal(pricingHostFor('Kimi'), 'platform.moonshot.cn')
+  assert.equal(pricingHostFor('moonshot'), 'platform.moonshot.cn')
+  assert.equal(pricingHostFor('GLM-4'), 'open.bigmodel.cn')
+  assert.equal(pricingHostFor('智谱'), 'open.bigmodel.cn')
+  assert.equal(pricingHostFor('some-unknown-vendor'), '')
+  assert.equal(pricingHostFor(''), '')
+  assert.equal(pricingHostFor(null), '')
+  // One query per option, scoped to the host that actually publishes the price.
+  assert.deepEqual(pricingTargetQueries('豆包'), ['site:volcengine.com 豆包 价格 tokens 百万'])
+  assert.deepEqual(pricingTargetQueries('  qwen  '), ['site:help.aliyun.com qwen 价格 tokens 百万'])
+  assert.deepEqual(pricingTargetQueries('unknown-vendor'), ['unknown-vendor API 价格 每百万 tokens'])
+  assert.deepEqual(pricingTargetQueries(''), [])
+  // The table is data, not behaviour: every entry is a frozen {pattern, host}.
+  assert.equal(PRICING_HOSTS.length, 5)
+  for (const entry of PRICING_HOSTS) {
+    assert.ok(entry.pattern instanceof RegExp)
+    assert.equal(typeof entry.host, 'string')
+    assert.ok(Object.isFrozen(entry))
+  }
+})
+
+test('a pricing scenario is recognised from the pack, the question or a known vendor (0.9.6)', () => {
+  const pricingStrategy = resolveStrategy({ questionKind: 'pricing', depth: 'standard', question: DOUBAO_QUESTION })
+  assert.equal(isPricingScenario({ strategy: pricingStrategy, question: DOUBAO_QUESTION, mode: 'compare' }), true)
+  // A docs-only pack with a price question still counts as pricing.
+  assert.equal(isPricingScenario({ strategy: null, question: '豆包 API 多少钱一百万 tokens', mode: null }), true)
+  // Compare mode over a known vendor counts even without a price word — the
+  // caller passes the candidate names, exactly as the refill stage does.
+  assert.equal(isPricingScenario({ strategy: null, question: '豆包 和 qwen 选哪个', mode: 'compare', options: ['豆包', 'qwen'] }), true)
+  // ... but only when a known vendor is among them.
+  assert.equal(isPricingScenario({ strategy: null, question: 'A 和 B 选哪个', mode: 'compare', options: ['A', 'B'] }), false)
+  // Ordinary concept work does not become a pricing run.
+  assert.equal(isPricingScenario({
+    strategy: resolveStrategy({ questionKind: 'concept', depth: 'standard', question: '什么是向量数据库' }),
+    question: '什么是向量数据库',
+    mode: 'concept',
+  }), false)
+  assert.equal(isPricingScenario({}), false)
+})
+
+test('a vendor page that prints 元/百万 tokens is recognised as the price page (0.9.6)', () => {
+  // The refill moves these pages to the front of the evidence batch, which is
+  // what makes them survive a wall-clock abort of a later batch.
+  assert.equal(pricingHostOfUrl('https://www.volcengine.com/docs/82379/doubao-pricing'), 'volcengine.com')
+  assert.equal(pricingHostOfUrl('https://volcengine.com/pricing'), 'volcengine.com')
+  assert.equal(pricingHostOfUrl('https://api-docs.deepseek.com/quick_start/pricing'), 'api-docs.deepseek.com')
+  assert.equal(pricingHostOfUrl('https://blog.example.com/volcengine-price'), '')
+  assert.equal(pricingHostOfUrl('not a url'), '')
+  assert.equal(isPricingEvidencePage({
+    url: 'https://www.volcengine.com/docs/82379/doubao-pricing',
+    text: '豆包大模型输入价 0.8 元/百万 tokens，输出价 2 元/百万 tokens。',
+  }), true)
+  // A vendor page without any money on it is not evidence of a price.
+  assert.equal(isPricingEvidencePage({
+    url: 'https://www.volcengine.com/docs/82379/overview',
+    text: '火山方舟提供模型推理、微调与部署能力，支持多地域调用。',
+  }), false)
+  // A price on an unknown host is not first-party pricing either.
+  assert.equal(isPricingEvidencePage({ url: 'https://blog.example.com/x', text: '0.8 元/百万 tokens' }), false)
 })

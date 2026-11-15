@@ -11,6 +11,28 @@
 
 - **Release workflow 的补建路径**（`2aa5d12`）：`workflow_dispatch` 补建历史 Release 时原本会检出 `main` 却按旧 tag 校验 `package.json` 版本，且旧 tag 树里没有 `scripts/release-notes.mjs`，导致 v0.9.0–v0.9.4 补建必然失败。现在 dispatch 路径检出 `main`、只校验 tag 存在且 `CHANGELOG.md` 有对应小节；push tag 路径仍检出 tag 并校验版本一致。
 
+## [0.9.6] - 2026-11-15
+
+> 起因是 0.9.5 的一次 standard 价格对比题（148s）暴露的两个真实回归：①「定向回补 1 项（解决 1）」确实跑了，但解决的不是豆包——`volcengine.com` 的定价页被读取、又被引用校验剔除，豆包单价仍缺；②「## 方案对比」只剩 deepseek-flash / deepseek-v4-pro 两行 + 一条合并行「qwen / 豆包 API」（价格列「未核实」、无 `[S#]`），候选被并格吞掉。本版做的是「表完整性校验 + 定向检索打准 + 别再把补到的页丢掉」。
+
+### Added
+
+- **比价表完整性校验**：`lib/brief.js` 新增 `checkCompareRows(brief, { options, stats, sink })`——解析「## 方案对比」表，按候选逐个确认是否**独立成行**。被合并进 `qwen / 豆包 API` 这类单元格的候选，在表后补一行 `> 注意：豆包 未作为独立行出现（价格未取得），下表结论不含该候选。`；独立成行但价格列为 `未核实 / 未知 / —` 的补 `（无来源）`（本来就写 `无证据` 的不重复标）。返回布尔并写 `stats.compareRowsComplete`，`buildResult()` 在合并段之后调用（`compareOptions` 由 `pipeline` 传入）。
+- `lib/pipeline.js` 新导出 `PRICING_HOSTS` / `pricingHostFor()` / `pricingTargetQueries()` / `pricingHostOfUrl()` / `isPricingEvidencePage()` / `isPricingScenario()`：`豆包|doubao|火山方舟` → `volcengine.com`、`qwen|通义|千问` → `help.aliyun.com`、`deepseek` → `api-docs.deepseek.com`、`kimi|moonshot` → `platform.moonshot.cn`、`glm|智谱` → `open.bigmodel.cn`。
+
+### Changed
+
+- **定向回补按厂商价目站检索**：pricing/compare 场景下 `targetedOptionRefill()` 的 query 从通用 `${option} 官方 价格` 改为 `site:<host> ${option} 价格 tokens 百万`（没有映射的选项回落 `${option} API 价格 每百万 tokens`），仍是每选项 1 条、最多 3 个选项；命中厂商主机的页排到证据批最前（`pricingHostsFirst()` / `pricingFirst()`），因为墙钟取消只影响靠后的批次——页进了 `pages` 但排在末尾，等于没进证据。
+- **引用校验只对回补页放宽**：`validateCitations(brief, sources, { refillUrls, maxKept = 2 })` 不再无条件丢弃未被引用的来源——属于定向回补页的保留最多 2 条，`参考` 里标 `（已检索，未被采用）`；`adoptedSources`/`adoptedUrls`/`officialAdopted` 只算真正被引用的（`citedOnly`），采用率不会被虚高。
+- **合成提示词硬规则**：compare 模式明确「每个候选必须独立一行，禁止用 `/`、`、`、`与`、`和` 把两个候选合并进同一格（如「qwen / 豆包 API」）；拿不到价格的候选写「未核实（无来源）」并保留该行」；表格行数上限从「最多 3 行」改为「N 个候选 N 行」，非对比表仍最多 3 行。
+
+### Tests
+
+- `test/brief.test.js` +4：`checkCompareRows` 三类（合并行→提示、缺价格→`（无来源）`、正常表与转置表→不动且幂等）+ 回补未被引用来源的保留与标注。
+- `test/prompts.test.js` +1（并格禁令用例）并改写 1（行数上限断言改为「每行一个方案」）。
+- `test/pipeline.test.js` +3（映射表、场景判定、厂商价目页识别），4 个既有定向回补用例改为断言 `site:` query。
+- 测试总数 360（19 个测试文件，本版新增 8 例），`node scripts/test-all.mjs` 全绿。
+
 ## [0.9.5] - 2026-11-15
 
 > 起因是一次 standard「国内大模型 API 价格对比」真实运行：180s 预算下拆题 26s / 检索 49s / **证据 86s** / 合成 14s，定向回补因「剩余时间不足」没跑，最终「可读 10 篇 · 采用 1 篇、豆包零证据」。本版把证据提取并行化并上调墙钟，同时补上「采用率为什么是 1」的诊断信号。
