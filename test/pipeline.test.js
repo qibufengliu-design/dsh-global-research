@@ -123,6 +123,29 @@ test('standard run produces a cited brief and stops at page budget', async () =>
   assert.ok(result.stats.queries <= 6)
 })
 
+test('run records integer per-stage timings and keeps fast runs out of the brief', async () => {
+  const result = await runResearch({
+    question: 'Node 22 是 LTS 吗？项目该用哪个版本',
+    depth: 'standard',
+    config: baseConfig(),
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  const timings = result.stats.timings
+  assert.ok(timings && typeof timings === 'object')
+  let total = 0
+  for (const key of ['analyze', 'search', 'read', 'evidence', 'gap', 'synth']) {
+    assert.equal(typeof timings[key], 'number', `${key} must be a number`)
+    assert.ok(Number.isInteger(timings[key]) && timings[key] >= 0, `${key} must be a non-negative integer`)
+    total += timings[key]
+  }
+  // Every millisecond of the run belongs to at most one stage, never more.
+  assert.ok(total <= result.stats.elapsedMs + 50, `stage total ${total}ms exceeds elapsed ${result.stats.elapsedMs}ms`)
+  // The fake pipeline never spends >0.5s in any stage, so no 阶段 suffix appears.
+  assert.doesNotMatch(result.brief, /· 阶段 /)
+})
+
 test('a Stack Overflow answer is read from the API when the page itself is blocked', async () => {
   const body = `Use use() with a Promise kept stable across renders. ${'A cached promise lets React suspend once and reuse the same request. '.repeat(6)}`
   const fetchRaw = async (url) => {

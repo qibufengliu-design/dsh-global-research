@@ -180,6 +180,15 @@ window.__ModuleLoader__.load({
       return stats
     }
 
+    // The stats line may end with `· 阶段 拆题1s/检索12s/精读30s/合成25s`. Old
+    // briefs and quick runs without slow stages have no such segment: no row.
+    function stageChipsOf(text) {
+      const match = /^>\s*本次检索：.*?·\s*阶段\s+([^\n·]+)/m.exec(text)
+      if (!match) return undefined
+      const chips = match[1].split('/').map((part) => part.trim()).filter(Boolean).slice(0, 4)
+      return chips.length > 0 ? chips : undefined
+    }
+
     /**
      * Older shells (and non-secure origins) have no navigator.clipboard, so a
      * hidden textarea + execCommand stays as the fallback. Returns true when
@@ -396,6 +405,7 @@ window.__ModuleLoader__.load({
       const sourceTotal = sourceCount(text) || sources.length
       const seconds = elapsedOf(block)
       const runStats = runStatsOf(text)
+      const stageChips = stageChipsOf(text)
       const meta = [sourceTotal > 0 ? `${sourceTotal} 个来源` : undefined,
         seconds ? `${seconds}s` : undefined].filter(Boolean).join(' · ')
       const conclusion = plain(section(text, '结论'))
@@ -429,6 +439,21 @@ window.__ModuleLoader__.load({
             background: 'transparent', whiteSpace: 'nowrap',
           },
         }, label))) : null,
+        // Second line: which stage ate the wall clock. Chips mirror the brief
+        // text verbatim (`阶段 拆题1s` + `检索12s` + …) so copy matches reading.
+        stageChips ? h('div', {
+          key: 'stages',
+          style: {
+            display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap',
+            font: MONO, color: CAPTION, fontSize: 10, opacity: 0.9,
+          },
+        }, stageChips.map((label, index) => h('span', {
+          key: `stage-${index}`,
+          style: {
+            border: BORDER, borderRadius: 999, padding: '0 6px',
+            background: 'transparent', whiteSpace: 'nowrap',
+          },
+        }, index === 0 ? `阶段 ${label}` : label))) : null,
         h('div', {
           key: 'c',
           style: {

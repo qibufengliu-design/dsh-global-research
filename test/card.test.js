@@ -168,6 +168,23 @@ test('research card omits the run-stats row for older briefs', () => {
   assert.doesNotMatch(json, /个页面/)
 })
 
+test('research card renders slow stages as a second row of chips', () => {
+  const Card = loadCard()
+  const stages = ' · 阶段 拆题1s/检索12s/精读30s/合成25s'
+  const json = JSON.stringify(Card({
+    phase: 'result',
+    block: resultBlock({ content: [{ type: 'text', text: `${BRIEF_WITH_STATS}${stages}` }] }),
+  }))
+  assert.match(json, /阶段 拆题1s/)
+  for (const chip of ['检索12s', '精读30s', '合成25s']) assert.match(json, new RegExp(chip))
+  // A stats line without the 阶段 segment must not render the extra row.
+  const plain = JSON.stringify(Card({
+    phase: 'result',
+    block: resultBlock({ content: [{ type: 'text', text: BRIEF_WITH_STATS }] }),
+  }))
+  assert.doesNotMatch(plain, /阶段 /)
+})
+
 test('research card shows a failure row for errored calls', () => {
   const Card = loadCard()
   const json = JSON.stringify(Card({

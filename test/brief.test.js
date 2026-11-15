@@ -138,6 +138,26 @@ test('appendStats maps depth labels and skips empty runs', () => {
   assert.equal(appendStats('x', { queries: 0, pagesFetched: 0, clusters: 0, elapsedMs: 0 }), 'x')
 })
 
+test('appendStats appends a stage summary in canonical order and skips sub-second noise', () => {
+  const brief = appendStats('x', {
+    queries: 2, pagesFetched: 3, clusters: 4, elapsedMs: 70000,
+    timings: { analyze: 900, search: 12000, read: 30000, evidence: 0, gap: 200, synth: 25000 },
+  }, 'quick')
+  // 证据/补缺 are 0ms and 200ms: below the 0.5s floor, so neither earns a chip.
+  assert.match(brief, / · 阶段 拆题1s\/检索12s\/精读30s\/合成25s$/)
+  assert.doesNotMatch(brief, /证据\d+s|补缺/)
+})
+
+test('stage summary keeps at most the four slowest stages, then restores stage order', () => {
+  const brief = appendStats('x', {
+    queries: 2, pagesFetched: 3, clusters: 4, elapsedMs: 90000,
+    timings: { analyze: 1000, search: 2000, read: 3000, evidence: 4000, gap: 5000, synth: 6000 },
+  }, 'standard')
+  // The four slowest are synth/gap/evidence/read, printed back as read→synth.
+  assert.match(brief, / · 阶段 精读3s\/证据4s\/补缺5s\/合成6s$/)
+  assert.doesNotMatch(brief, /拆题\d+s|检索\d+s/)
+})
+
 test('autoDepth picks deep for comparison, quick for simple facts', () => {
   assert.equal(autoDepth('pnpm vs yarn vs bun，2026 年该选哪个？'), 'deep')
   assert.equal(autoDepth('TypeScript 是什么？'), 'quick')

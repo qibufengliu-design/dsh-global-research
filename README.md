@@ -157,6 +157,7 @@ config:
 
 - 标题行：置信度徽章（高/中/低，绿/黄/红）、来源数、耗时（`block.meta.elapsedMs`）。
 - 标题行下方：一行小字徽章（本次查询数 / 抓取页数 / 证据条数 / 耗时），从简报末尾的「本次检索」行解析；老结果没有这行时不显示。
+- 统计数据下方：再一行更小的灰色 chip，显示各阶段耗时（`阶段 拆题1s/检索12s/精读30s/合成25s`），同样从「本次检索」行解析；没有阶段段（老结果或全程都很快）时这行不渲染。
 - 正文：结论段前 3 行，去掉 `[S#]` 与 Markdown 标记，适合快速扫读。
 - 「展开」：显示完整简报纯文本；再点「收起」。
 - 运行中显示问题原文与「研究中…」；出错时显示红色失败行。
@@ -187,7 +188,20 @@ config:
 Get-ChildItem test\*.test.js | ForEach-Object { node $_.FullName }
 ```
 
-覆盖：URL 规范化与内容去重、预算、JSON 修复、引用校验、DDG 解析、引擎失败隔离与自动禁用、付费引擎解析与 key 来源、垂直源选择与解析（GitHub/arXiv/StackExchange/npm/HN/PyPI，含垃圾 payload、纯中文 query 跳过、SE 标签映射与 intitle 回退、单源失败隔离）、管线十步（假引擎/假抓取/假模型，含检索计划优先与 ghost citation 清理）、官方链接挖掘与预算边界、EUR-Lex Cellar 映射与回退、EUR-Lex 摘要页/搜索页降权与 ELI 原文优先、EU 站点语言前缀归一、法规问题回补预留页位、无一手源时回补强制官方域名 query、垂直源正文兜底与选择位保护、配置校验（类型强转/夹取/未知键 warning）、域名信任名单与黑名单过滤、缓存（key 归一、TTL、LRU、命中不调模型、focus 不同绕过、可关闭）、client 卡片解析（置信度徽章/来源数/耗时/失败与运行中状态/无分段兜底）、`apply` 注册、skill 注册与端到端 execute。共 117 例。
+覆盖：URL 规范化与内容去重、预算、JSON 修复、引用校验、DDG 解析、引擎失败隔离与自动禁用、付费引擎解析与 key 来源、垂直源选择与解析（GitHub/arXiv/StackExchange/npm/HN/PyPI，含垃圾 payload、纯中文 query 跳过、SE 标签映射与 intitle 回退、单源失败隔离）、管线十步（假引擎/假抓取/假模型，含检索计划优先与 ghost citation 清理）、阶段耗时（六个阶段的整数毫秒、快跑不进简报）、官方链接挖掘与预算边界、EUR-Lex Cellar 映射与回退、EUR-Lex 摘要页/搜索页降权与 ELI 原文优先、EU 站点语言前缀归一、法规问题回补预留页位、无一手源时回补强制官方域名 query、垂直源正文兜底与选择位保护、配置校验（类型强转/夹取/未知键 warning）、域名信任名单与黑名单过滤、缓存（key 归一、TTL、LRU、命中不调模型、focus 不同绕过、可关闭）、client 卡片解析（置信度徽章/来源数/耗时/失败与运行中状态/无分段兜底/阶段 chip 与缺段不渲染）、阶段摘要格式（>0.5s、最多 4 段、按阶段顺序输出）、`apply` 注册、skill 注册与端到端 execute。共 163 例。
+
+## 真实网络 e2e
+
+单元测试全部用假引擎、假抓取和假模型，抓不到只在真实网络上出现的问题（DDG challenge、JS 壳页面、引用校验吞掉真实片段）。`scripts/e2e-real.mjs` 用真实 `fetch`、真实 `lib/engines.js` 和 `lib/fetch.js` 跑一遍 `runResearch`，只把 LLM 换成固定应答的假模型（唯一要花钱、要 provider 的依赖）：
+
+```powershell
+$env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
+```
+
+- 不设 `RUN_REAL=1` 时打印 `skipped (set RUN_REAL=1)` 并以 0 退出，所以它**不在默认测试/CI 流程里**（普通的 `Get-ChildItem test\*.test.js | ForEach-Object { node $_.FullName }` 不会碰它）。
+- `TAVILY_API_KEY` 可选：不设就跳过 Tavily，退回免 key 的 ddg-html + 垂直源。搜索层全被墙时脚本会 FAIL（退出码 1），不静默通过。
+- 断言：`queries >= 2`、`pagesFetched >= 1`、简报含 `## 参考` 与 `> 本次检索`、全程不抛错；成功打印一行 `PASS e2e-real: queries=… pages=… clusters=… sources=… engine=… elapsed=…s`，失败打印 `FAIL e2e-real: …` 并退出 1。
+- 加 `E2E_VERBOSE=1` 可看到引擎失败、证据批次与卡住的环节。
 
 ## 路线图
 
@@ -200,7 +214,7 @@ Get-ChildItem test\*.test.js | ForEach-Object { node $_.FullName }
 
 - **时间敏感问题不缓存**：问题含「最新/现在/价格/EOL/latest/current/release」等词时跳过缓存；普通缓存命中会在简报首行提示「本结果来自 N 分钟前的缓存」。
 - **追问续跑**：`researchId` 复用上一轮已读页面与证据，只补新缺口（30 分钟内有效）；省略式追问建议同时带 `context`。
-- **过程可见**：简报末尾固定一行 `> 本次检索：N 个查询 · M 个页面 · K 条证据 · T 秒（档位）`，卡片解析成四个小徽章。
+- **过程可见**：简报末尾固定一行 `> 本次检索：N 个查询 · M 个页面 · K 条证据 · T 秒（档位）`，卡片解析成四个小徽章；行尾再追加 ` · 阶段 拆题Xs/检索Ys/精读Zs/合成Ws`（只列 >0.5s 的阶段，最多 4 段），卡片把这一段渲染成第二行灰色小 chip。
 - **结果导出**：`saveTo` 把简报写成 Markdown（含参考与统计行）；不传则不落盘。
 - **研究类型**：`mode: explain | compare | track | evaluate`，compare 强制对比表与适用条件，track 强制带日期的时间线，evaluate 输出约束→匹配度→风险。
 - **URL 直取**：问题里贴的 URL 会优先直接抓取，不再要求是官方域名。
