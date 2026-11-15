@@ -86,6 +86,8 @@ plugin_manager set_plugin target: include:global-research enabled: true
 | `cache.enabled` | `true` | 同一问题（question/depth/focus/outputLanguage 全同）在 TTL 内复用上一次简报，不再花检索与模型额度；`partial` 结果不入缓存 |
 | `cache.ttlMinutes` | `60` | 缓存有效期（1–1440 分钟） |
 | `cache.maxEntries` | `16` | 进程内最多保留多少条结果（LRU 淘汰） |
+| `cache.persistPath` | `''` | 缓存快照落盘路径（0.7.1）：留空=只放内存；相对路径相对 workspace（`process.cwd()`），文件不存在时静默按空缓存启动 |
+| `cache.persistDebounceMs` | `500` | 落盘防抖（0–60000 毫秒）：`set/clear` 后等这么久再写临时文件并 `rename`；`0`=立即写 |
 | `domainTrust.trusted` | `[]` | 额外视为一手/可信来源的域名（可写 URL，自动取 host），参与排序与一手来源门槛 |
 | `domainTrust.blocked` | `[]` | 直接排除的域名（内容农场、垃圾站），排序前过滤 |
 
@@ -102,7 +104,7 @@ plugin_manager set_plugin target: include:global-research enabled: true
 
 ### 结果缓存
 
-同一 `question` + `depth` + `focus` + `outputLanguage` 在 `cache.ttlMinutes` 内再次调用时，直接返回上次的简报（`stats.cached=true`、`cachedAgeMinutes=N`、`elapsedMs=0`），不再发起检索或模型调用；`focus` 不同即视为不同问题。缓存是进程内的，重启 DSH 即清空，不写磁盘；`partial:true` 的结果不入缓存，避免把"没跑完"的结论复用给后续提问。
+同一 `question` + `depth` + `focus` + `outputLanguage` 在 `cache.ttlMinutes` 内再次调用时，直接返回上次的简报（`stats.cached=true`、`cachedAgeMinutes=N`、`elapsedMs=0`），不再发起检索或模型调用；`focus` 不同即视为不同问题。默认缓存只在进程内，重启 DSH 即清空、不写磁盘；把 `cache.persistPath` 设成非空路径（如 `.cache/research.json`）才会落盘（0.7.1）：启动时读回快照、丢弃已过 TTL 的条目、按 `maxEntries` 截断，坏 JSON 只记一条日志并按空缓存继续。`partial:true` 的结果不入缓存，避免把"没跑完"的结论复用给后续提问。
 
 **时效性问题不缓存**：问题或 focus 命中"最新 / 当前 / 现在 / 今年 / 发布 / 价格 / 版本 EOL / latest / current / release / price"等词时，跳过缓存读写——宁可多跑一次，也不给旧答案。命中缓存时简报首行会标注 `> 本结果来自 N 分钟前的缓存，可能已过时`，不会静默复用。**带 `context` 的追问也不缓存**（上下文不同，语义就不同）。
 
@@ -376,6 +378,14 @@ API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会
 
 `官方` 指官方域名（`isOfficialDomain`）或经 sitemap 定向通道抓到的页面；`x/y` 表示这些可读页里有 `x` 页最终进了「## 参考」。读到了却没采用，是证据抽取漏了，而不是检索没抓到——0.6.2 的逐页兜底专门修这一点：模型只引用了部分页面时，没被引用的页面也会各补一条启发式证据（官方/通道页段落门槛 60 字符，其余 120 字符）。
 
+0.7.1 起，planner 标了 query 类别时（`planPrompt` 返回 `{q, kind}`），行尾再补一段查询构成；没有 query 或旧格式不出现，前面四数/官方采用段一字不变：
+
+```text
+> 检索流程：识别 20 篇 · 去重后 12 篇 · 可读 9 篇 · 采用 3 篇 · 官方采用 1/3 · 查询 中文语义 4 / 英文技术 3 / 官方定向 2
+```
+
+三类计数之和等于 `stats.queries`；类别由模型给出，缺省按形状兜底（`site:`→官方定向、含中文→中文语义、其余→英文技术）。
+
 冲突不再是一个平铺列表，而是三分：
 
 ```text
@@ -406,6 +416,13 @@ API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会
 - 万一过期页仍进了「## 参考」（全页过期或已被采用），该行行尾标 `（已过期，仅作参考）`。
 
 ## 更新日志
+
+### 0.7.1（2026-11-15）
+
+- **零证据选项显式提示**：compare 模式（以及 `tech-selection` 一类对比式选型）在合成前先算每个候选选项的证据覆盖。`lib/pipeline.js` 的 `compareOptions(question, focus)` 从问题与评估维度里按 `|`、`/`、`、`、`vs`、`还是` 切出候选（去重、最多 5 个），`countOptionHits` 用选项 token 与 cluster 的 claim/证据文本比对；命中为 0 的选项追加进 `gaps`：`选项「X」在本轮证据中没有可用来源（零证据），未纳入对比`，同时写进 `stats` 之外的结果字段供简报兜底。`lib/brief.js` 的 `applyZeroEvidenceOptions` 再把「## 方案对比」表里该选项行的其余单元格改写为 `无证据`（模型漏写这行时补一行；整段没有表格时退化成 bullet），并在「## 未解决」保留同一句。改表发生在 `validateCitations` 之前，被清掉的 `[S#]` 不会留在参考里；函数幂等。
+- **缓存落盘（默认关闭）**：`config.cache.persistPath`（默认 `''`，空=只放内存，相对路径相对 workspace）与 `persistDebounceMs`（默认 500，0=立即写）。`ResearchCache` 增 `load()`：启动时读回 JSON、校验结构、丢弃过期条目并按 `maxEntries` 截断；`save()` 防抖写临时文件再 `rename`，`set/clear` 自动触发；`flush()` 供测试与退出前等待。坏快照只经 `onError` 记日志，不让插件启动失败；空路径完全不碰文件系统。
+- **planner 查询三分类**：`planPrompt` 要求 `{"queries":[{"q","kind"}],"directUrls":[],"reason":"..."}`，`kind ∈ semantic|technical|official`（中文语义 / 英文技术 / `site:` 官方定向）。旧格式的裸字符串 query 照常可用并默认按 `semantic` 计；缺 kind 时 `lib/pipeline.js` 按形状兜底（`site:`→official、含中文→semantic、其余→technical），`stats.queriesByKind` 计数，`> 检索流程：` 行尾追加 `· 查询 中文语义 a / 英文技术 b / 官方定向 c`（仅当总数 > 0，四数行原有格式不变）。
+- 测试总数 305（新增 cache 4：落盘重建读回、过期条目不读回、空路径不写文件、坏快照容错；config 1：落盘配置校验；brief 2：流程行 query mix、无证据表改写；prompts 1：plan 的 kind 字段；pipeline 3：kind 计数与流程行、旧字符串格式、compare 零证据选项）。
 
 ### 0.7.0（2026-11-15）
 

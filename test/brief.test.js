@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  appendConflictSection, appendReferences, appendRetrievalFlow, appendStats, assignSourceIds, buildResult,
-  computeConfidence, ensureSections, fallbackBrief, gradeSource, validateCitations,
+  appendConflictSection, appendReferences, appendRetrievalFlow, appendStats, applyZeroEvidenceOptions, assignSourceIds, buildResult,
+  computeConfidence, ensureSections, fallbackBrief, formatRetrievalFlow, gradeSource, validateCitations, zeroEvidenceGapText,
 } from '../lib/brief.js'
 import { findSelfContradictions } from '../lib/assertions.js'
 import { autoDepth, buildQueries, groupEvidence, resolveDepth, shortFragments } from '../lib/pipeline.js'
@@ -617,4 +617,48 @@ test('reference lines mark retired sources as 已过期 (0.6.6)', () => {
   const fresh = text.split('\n').find((line) => line.includes('nodejs.org'))
   assert.match(retired, /（已过期，仅作参考）$/)
   assert.doesNotMatch(fresh, /已过期/)
+})
+
+test('the funnel line reports the planner query mix (0.7.1)', () => {
+  const line = formatRetrievalFlow({
+    identified: 10, deduped: 8, readable: 5, adopted: 3,
+    queriesByKind: { semantic: 2, technical: 3, official: 1 },
+  })
+  assert.equal(line, '> 检索流程：识别 10 篇 · 去重后 8 篇 · 可读 5 篇 · 采用 3 篇 · 查询 中文语义 2 / 英文技术 3 / 官方定向 1')
+  // A run that planned no queries keeps the 0.6.x line byte for byte.
+  assert.equal(
+    formatRetrievalFlow({ identified: 10, deduped: 8, readable: 5, adopted: 3, queriesByKind: { semantic: 0, technical: 0, official: 0 } }),
+    '> 检索流程：识别 10 篇 · 去重后 8 篇 · 可读 5 篇 · 采用 3 篇',
+  )
+  assert.doesNotMatch(formatRetrievalFlow({ identified: 10, deduped: 8, readable: 5, adopted: 3 }), /查询/)
+})
+
+test('a zero-evidence option is marked 无证据 in the comparison table (0.7.1)', () => {
+  const compare = [
+    '## 结论',
+    '多数场景 pnpm 更省磁盘 [S1]。',
+    '',
+    '## 方案对比',
+    '| 方案 | 优势 | 风险 | 适用条件 |',
+    '| --- | --- | --- | --- |',
+    '| pnpm | 安装快 [S1] | 生态较新 | 单仓多包 |',
+    '| bun | 内置运行时 [S3] | 生态早期 | 试点 |',
+    '',
+    '## 置信度',
+    'medium',
+  ].join('\n')
+
+  const marked = applyZeroEvidenceOptions(compare, ['bun'])
+  assert.match(marked, /^\| bun \| 无证据 \| 无证据 \| 无证据 \|$/m)
+  assert.match(marked, /^\| pnpm \| 安装快 \[S1\]/m, 'the evidenced row is untouched')
+  assert.equal(applyZeroEvidenceOptions(marked, ['bun']), marked, 'idempotent')
+
+  // The model dropped the option entirely: add the row instead of leaving a
+  // shorter shortlist that implies the option was weighed.
+  const dropped = compare.replace('| bun | 内置运行时 [S3] | 生态早期 | 试点 |\n', '')
+  assert.match(applyZeroEvidenceOptions(dropped, ['bun']), /^\| bun \| 无证据 \| 无证据 \| 无证据 \|$/m)
+
+  // No table at all: a bullet carries the fact, no table is invented.
+  assert.match(applyZeroEvidenceOptions('## 方案对比\n不适用\n\n## 置信度\nlow', ['bun']), /- 「bun」：无证据/)
+  assert.match(zeroEvidenceGapText('bun'), /^选项「bun」在本轮证据中没有可用来源（零证据），未纳入对比$/)
 })

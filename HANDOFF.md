@@ -2,7 +2,7 @@
 
 ## 一句话状态
 
-插件可日常使用（P0–P8 + 0.6.x + 0.7.0 全部完成），**已推送到 GitHub**（`main` 随 0.6.8 推过；0.7.0 尚未推）。
+插件可日常使用（P0–P8 + 0.6.x + 0.7.0 + 0.7.1 全部完成），**已推送到 GitHub**（`main` 随 0.6.8 推过；0.7.0、0.7.1 尚未推）。
 
 ## 仓库与版本
 
@@ -19,7 +19,9 @@
   - `73e9722` 0.6.7 base 相对 sitemap 发现（docs.spring.io/spring-ai 等终于能爬）
   - `0b71c46` 0.6.8 sitemap 跨主机改写 + 按题选文档 base
   - `14402f7` 0.7.0 证据排序层：具体 API/参考页排在仓库源码之前
-- 测试：17 个文件逐个跑，**294 例全绿**（`node --test test/` 在沙箱会 EPERM，只能逐文件跑）
+  - `bf91614` docs: handoff 0.7.0 commit hash
+  - 0.7.1（本次提交）零证据对比提示 + 缓存落盘 + planner 查询三分类；hash 在此文件改写后生成，未回填
+- 测试：17 个文件逐个跑，**305 例全绿**（`node --test test/` 在沙箱会 EPERM，只能逐文件跑）
 
 ## 推送
 
@@ -40,15 +42,18 @@ git -c http.sslBackend=openssl push origin main
 4. **冲突三分**：事实冲突 / 口径差异 / 来源自相矛盾，不再把"不同口径"当成"事实矛盾"。
 5. **旧源降权**：标题含"已过期/不再维护/archived"的降 3 分；sitemap 选页优先 `/docs/ /reference/ /guides/`，避开 `/blog/`；`lastmod` 超 3 年再降权。
 6. **证据排序层**（0.7.0）：`sourceTier(url)` 给每页分档（doc-page +4 / doc-index +2 / repo-doc +1 / repo-code −2 / forum −1 / blog −2），`rankHits` 叠加档位分；tech-selection / learning / compare 下还留一个 doc-page 槽位。回归 A 里「8 条采用 5 条是仓库」的问题由此修掉。
+7. **零证据选项说清楚**（0.7.1）：用户比的选项若一条证据都没有，不再从表里悄悄消失——表里该行写 `无证据`，`gaps` 与「## 未解决」都留同一句。
+8. **缓存可落盘**（0.7.1，默认关）：`cache.persistPath` 非空时启动读回、`set/clear` 防抖原子写；过期条目与坏快照都不会污染进程。
+9. **检索计划可审计**（0.7.1）：planner 给每条 query 标 semantic/technical/official，`> 检索流程：` 行尾多一段 `· 查询 中文语义 a / 英文技术 b / 官方定向 c`。
 
 ## 已知缺口（不是 bug，是数据/结构限制）
 
 - 厂商 token 单价（如豆包）在官网 JS 渲染页后面，纯 HTTP 拿不到；`text` 参数可让用户贴正文直接进证据（0.6.0 新增）。
-- compare 模式下某个选项可能零证据（例如 Haystack），简报会在「未解决」里提示，但不会编造。
+- 零证据判定是「选项名 token 在 claim/证据文本里是否出现」，同义词（如 Haystack 写作 `haystack-ai`）可能漏判；漏判只会多一行提示，不会编造证据。
 - 输入框只能显示/复制设置路径，不能就地切档（bundle 插件无 host 写通道；要做得改 Dynamic Cordis，见 README「设置页」）。
 
 ## 下次接着做
 
-- 推送本地提交（0.7.0 之后又多 1 个）；
-- 可选：`text` 参数做 UI 入口、"某选项零证据"显式提示、缓存落盘。
+- 推送本地提交（0.7.0 之后又多了 0.7.1 的 1 个）；
+- 可选：`text` 参数做 UI 入口。
 - 运行手册与细节：`D:\Total\docs\superpowers\specs\2026-11-15-regression-0.6.md`、`2026-11-15-p5-research-hardening.md`、`2026-11-15-cross-domain-scan.md`。

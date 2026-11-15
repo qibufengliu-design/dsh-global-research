@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { evidencePrompt, synthPrompt } from '../lib/prompts.js'
+import { evidencePrompt, planPrompt, synthPrompt } from '../lib/prompts.js'
 
 function page(url, text = 'DeepSeek 输入价格 0.2 元/百万 tokens，要求 v22.11.0 以上，有效期到 2027-04-30。') {
   return { url, title: `page ${url}`, text, engine: 'web', publishedAt: '2025-01-01' }
@@ -64,4 +64,15 @@ test('evidence prompt marks retired pages so the model does not prop claims on t
   assert.match(prompt, /\[页面 1\][^\n]*⚠ 已过期\/停维护/)
   assert.doesNotMatch(prompt.split('\n').find((line) => line.startsWith('[页面 0]')), /已过期/)
   assert.ok(prompt.includes('不要用它支撑当前状态'), 'the stale-citation rule is missing')
+})
+
+test('plan prompt tags every query with one of the three kinds (0.7.1)', () => {
+  const prompt = planPrompt({ question: 'pnpm 还是 yarn 该选哪个？', focus: [], depth: 'standard' })
+  assert.ok(prompt.includes('"kind"'), 'the per-query kind field is missing')
+  assert.ok(prompt.includes('semantic'), 'the semantic kind is missing')
+  assert.ok(prompt.includes('technical'), 'the technical kind is missing')
+  assert.ok(prompt.includes('official'), 'the official kind is missing')
+  // The example must show the object form; a bare string list would silently
+  // teach the model the old shape.
+  assert.ok(prompt.includes('{"queries":[{"q":"...","kind":"semantic"}]'), 'the JSON example does not show the kind field')
 })

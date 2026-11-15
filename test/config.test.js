@@ -23,7 +23,23 @@ test('validateConfig coerces booleans and numbers from the bundle patch', () => 
   assert.equal(config.verboseLog, false)
   assert.equal(config.timeoutMs, 45000)
   assert.equal(config.maxDeepPerSession, 3)
-  assert.deepEqual(config.cache, { enabled: false, ttlMinutes: 30, maxEntries: 8 })
+  assert.deepEqual(config.cache, { enabled: false, ttlMinutes: 30, maxEntries: 8, persistPath: '', persistDebounceMs: 500 })
+})
+
+test('validateConfig keeps cache persistence opt-in and rejects bad path values', () => {
+  const defaults = validateConfig({}).config.cache
+  assert.equal(defaults.persistPath, '', 'persistence stays off unless the user asks for it')
+  assert.equal(defaults.persistDebounceMs, 500)
+
+  const { config, warnings } = validateConfig({ cache: { persistPath: '  .cache/research.json  ', persistDebounceMs: 0 } })
+  assert.equal(config.cache.persistPath, '.cache/research.json')
+  assert.equal(config.cache.persistDebounceMs, 0)
+
+  const bad = validateConfig({ cache: { persistPath: 42, persistDebounceMs: 'soon' } })
+  assert.equal(bad.config.cache.persistPath, '')
+  assert.equal(bad.config.cache.persistDebounceMs, 500)
+  assert.ok(bad.warnings.some((warning) => /cache\.persistPath/.test(warning)))
+  assert.ok(bad.warnings.some((warning) => /cache\.persistDebounceMs/.test(warning)))
 })
 
 test('validateConfig clamps unsafe values instead of failing the tool', () => {

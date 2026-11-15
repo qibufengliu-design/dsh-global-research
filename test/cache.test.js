@@ -1,5 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { ResearchCache, cacheKey } from '../lib/cache.js'
 
 test('cacheKey ignores whitespace, case and focus order but keeps focus content', () => {
@@ -78,4 +82,75 @@ test('cacheKey keeps user-provided text so different material never shares a bri
     cacheKey({ question, depth: 'quick', text: '  Node 22   支持到 2027 年 4 月。 ' }),
   )
   assert.notEqual(withText, cacheKey({ question, depth: 'quick', text: 'Node 22 支持到 2026 年 4 月。' }))
+})
+
+// 0.7.1 — opt-in persistence. These tests own a temp directory so the real
+// workspace is never written to.
+async function withTempDir(fn) {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-research-cache-'))
+  try {
+    return await fn(dir)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+test('cache snapshot is written atomically and can be read back by a new instance', async () => {
+  await withTempDir(async (dir) => {
+    const persistPath = join(dir, 'nested', 'cache.json')
+    const now = () => 1_000_000
+    const first = new ResearchCache({ persistPath, debounceMs: 0, now, ttlMs: 60_000 })
+    first.set('k1', { brief: 'hello' })
+    first.set('k2', { brief: 'world' })
+    await first.flush()
+    assert.ok(existsSync(persistPath), 'snapshot exists after flush')
+    const parsed = JSON.parse(readFileSync(persistPath, 'utf8'))
+    assert.equal(parsed.version, 1)
+    assert.equal(parsed.entries.length, 2, 'no temp file is left behind, both entries are in the snapshot')
+    assert.deepEqual(parsed.entries.map((entry) => entry.key), ['k1', 'k2'])
+
+    const second = new ResearchCache({ persistPath, debounceMs: 0, now, ttlMs: 60_000 })
+    assert.equal(second.load(), 2)
+    assert.deepEqual(second.get('k1'), { brief: 'hello' })
+    assert.deepEqual(second.get('k2'), { brief: 'world' })
+  })
+})
+
+test('expired entries in a snapshot are not restored', async () => {
+  await withTempDir(async (dir) => {
+    const persistPath = join(dir, 'cache.json')
+    const writer = new ResearchCache({ persistPath, debounceMs: 0, now: () => 1_000, ttlMs: 5_000 })
+    writer.set('old', { brief: 'stale' })
+    await writer.flush()
+
+    const reader = new ResearchCache({ persistPath, debounceMs: 0, now: () => 10_000, ttlMs: 5_000 })
+    assert.equal(reader.load(), 0)
+    assert.equal(reader.size, 0)
+    assert.equal(reader.get('old'), undefined)
+  })
+})
+
+test('an empty persist path never touches the filesystem', async () => {
+  await withTempDir(async (dir) => {
+    const cache = new ResearchCache({ persistPath: '', now: () => 1_000 })
+    assert.equal(cache.persistPath, '')
+    cache.set('a', 1)
+    assert.equal(cache.timer, null, 'no debounce timer is scheduled without a path')
+    await cache.flush()
+    assert.deepEqual(readdirSync(dir), [], 'nothing is written next to the process')
+    assert.equal(cache.load(), 0, 'load() is a no-op without a path')
+    assert.equal(cache.size, 1, 'the in-memory entry still works')
+  })
+})
+
+test('a corrupt snapshot is reported and treated as an empty cache', async () => {
+  await withTempDir(async (dir) => {
+    const persistPath = join(dir, 'cache.json')
+    writeFileSync(persistPath, '{not json', 'utf8')
+    const errors = []
+    const cache = new ResearchCache({ persistPath, onError: (error) => errors.push(error) })
+    assert.equal(cache.load(), 0)
+    assert.equal(cache.size, 0)
+    assert.equal(errors.length, 1)
+  })
 })

@@ -942,7 +942,7 @@ test('a docs kind crawls its declared sitemap and clamps pages to the budget', a
   // them were adopted.
   assert.equal(result.stats.officialReadable, 3)
   assert.ok(result.stats.officialAdopted >= 1 && result.stats.officialAdopted <= 3)
-  assert.match(result.brief, new RegExp(`> 检索流程：.*· 官方采用 ${result.stats.officialAdopted}/3$`, 'm'))
+  assert.match(result.brief, new RegExp(`> 检索流程：.*· 官方采用 ${result.stats.officialAdopted}/3(?: · 查询 [^\\n]+)?$`, 'm'))
   assert.match(result.brief, /^## 结论$/m)
 })
 
@@ -1334,4 +1334,138 @@ test('tech-selection without a doc-page candidate is not padded (0.7.0)', async 
     `no invented source: ${without.fetched.join(' | ')}`,
   )
   assert.ok(withDoc.fetched.includes(TIER_DOC_PAGE))
+})
+
+function planAwareResponder(plan) {
+  return (options) => {
+    const prompt = options.user ?? ''
+    if (prompt.includes('检索规划员')) return JSON.stringify(plan)
+    return defaultResponder(options)
+  }
+}
+
+test('planner query kinds are counted and shown on the funnel line (0.7.1)', async () => {
+  const result = await runResearch({
+    question: 'Node 22 LTS 支持到什么时候',
+    depth: 'standard',
+    config: baseConfig(),
+    llm: fakeLlm(planAwareResponder({
+      queries: [
+        { q: 'Node 22 LTS 支持到什么时候', kind: 'semantic' },
+        { q: 'Node.js release schedule LTS end of life', kind: 'technical' },
+        { q: 'site:nodejs.org Node 22 LTS', kind: 'official' },
+      ],
+      directUrls: [],
+      reason: '三类各一条',
+    })),
+    selection,
+    logger: () => {},
+  })
+  const counts = result.stats.queriesByKind
+  assert.ok(counts.semantic >= 1, JSON.stringify(counts))
+  assert.ok(counts.technical >= 1, JSON.stringify(counts))
+  assert.ok(counts.official >= 1, JSON.stringify(counts))
+  assert.equal(counts.semantic + counts.technical + counts.official, result.stats.queries)
+  assert.match(
+    result.brief,
+    new RegExp(`· 查询 中文语义 ${counts.semantic} / 英文技术 ${counts.technical} / 官方定向 ${counts.official}$`, 'm'),
+  )
+})
+
+test('a bare-string plan still works and counts as semantic (0.7.1)', async () => {
+  const result = await runResearch({
+    question: 'Node 22 LTS 支持到什么时候',
+    depth: 'standard',
+    config: baseConfig(),
+    llm: fakeLlm(planAwareResponder({
+      queries: ['Node 22 LTS 支持多久', 'Node.js LTS 维护时间表'],
+      directUrls: [],
+      reason: '旧格式',
+    })),
+    selection,
+    logger: () => {},
+  })
+  const counts = result.stats.queriesByKind
+  assert.ok(counts.semantic >= 2, JSON.stringify(counts))
+  assert.equal(counts.technical, 0, 'bare strings must not be guessed into technical')
+  assert.ok(!/· 官方定向 0$/.test(result.brief.split('\n').find((line) => line.startsWith('> 检索流程：')) ?? ''))
+})
+
+function compareSynthReply() {
+  return [
+    '## 结论',
+    '单仓多包场景下 pnpm 更合适 [S1]。',
+    '',
+    '## 依据',
+    '- pnpm 共享依赖，安装更快 [S1]',
+    '- yarn PnP 省掉 node_modules [S2]',
+    '',
+    '## 方案对比',
+    '| 方案 | 优势 | 风险 | 适用条件 |',
+    '| --- | --- | --- | --- |',
+    '| pnpm | 安装快 [S1] | 生态较新 | 单仓多包 |',
+    '| yarn | 省空间 [S2] | 兼容性 | 新项目 |',
+    '| bun | 内置运行时 [S3] | 生态早期 | 试点 |',
+    '',
+    '## 坑与风险',
+    '未发现',
+    '',
+    '## 置信度',
+    'medium',
+    '',
+    '## 未解决',
+    '无',
+  ].join('\n')
+}
+
+function compareResponder(options) {
+  const prompt = options.user ?? ''
+  if (prompt.includes('研究简报')) return compareSynthReply()
+  if (prompt.includes('<untrusted>')) {
+    return JSON.stringify([
+      { claim: 'pnpm 通过硬链接共享依赖，安装更快', quote: 'pnpm links every file from a global content-addressable store.', source: 0, type: 'docs', stance: 'support' },
+      { claim: 'yarn 的 PnP 模式省掉 node_modules', quote: 'Yarn Plug PnP removes node_modules entirely.', source: 1, type: 'docs', stance: 'support' },
+    ])
+  }
+  if (prompt.includes('拆解')) {
+    return JSON.stringify({
+      subQuestions: [{ q: 'pnpm yarn bun 各自的安装机制是什么？', why: '对比基线', evidence: 'docs' }],
+      constraints: [],
+      criteria: ['安装速度', '生态兼容'],
+      language: 'zh',
+    })
+  }
+  if (prompt.includes('缺口')) return JSON.stringify({ queries: [], reason: '无' })
+  return '{}'
+}
+
+function compareFetcher() {
+  return async (url) => ({
+    url, finalUrl: url, title: `page ${url}`, domain: new URL(url).hostname,
+    text: 'pnpm links every file from a global content-addressable store. Yarn Plug PnP removes node_modules entirely. bun ships a runtime and a package manager in one binary.',
+    ok: true,
+  })
+}
+
+test('an option with no evidence is called out instead of silently dropped (0.7.1)', async () => {
+  const config = baseConfig()
+  config.__fetchPage = compareFetcher()
+  const result = await runResearch({
+    question: 'pnpm 还是 yarn 还是 bun，该选哪个？',
+    depth: 'quick',
+    mode: 'compare',
+    config,
+    llm: fakeLlm(compareResponder),
+    selection,
+    logger: () => {},
+  })
+  // bun was named by the user but no cluster mentions it.
+  assert.ok(
+    result.gaps.some((gap) => gap.includes('选项「bun」') && gap.includes('零证据')),
+    JSON.stringify(result.gaps),
+  )
+  assert.ok(!result.gaps.some((gap) => gap.includes('选项「pnpm」')), JSON.stringify(result.gaps))
+  assert.match(result.brief, /^\| bun \| 无证据 \| 无证据 \| 无证据 \|$/m)
+  assert.match(result.brief, /^\| pnpm \| 安装快 \[S\d\]/m, 'the evidenced rows keep their citations')
+  assert.match(result.brief, /## 未解决[\s\S]*选项「bun」在本轮证据中没有可用来源/)
 })

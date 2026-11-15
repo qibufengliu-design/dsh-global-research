@@ -164,9 +164,23 @@ export function apply(ctx, rawConfig = {}) {
   }
   registerSkill(ctx)
   const fetchRaw = createRawFetcher()
+  // 0.7.1 — cache persistence is opt-in. A relative path is resolved against
+  // the workspace root, the same base saveTo uses, so "cache.json" lands where
+  // the user expects instead of next to the installed plugin.
+  const cachePersistPath = config.cache.persistPath
+    ? (isAbsolute(config.cache.persistPath) ? config.cache.persistPath : resolve(process.cwd(), config.cache.persistPath))
+    : ''
   const cache = config.cache.enabled
-    ? new ResearchCache({ maxEntries: config.cache.maxEntries, ttlMs: config.cache.ttlMinutes * 60000 })
+    ? new ResearchCache({
+      maxEntries: config.cache.maxEntries,
+      ttlMs: config.cache.ttlMinutes * 60000,
+      persistPath: cachePersistPath,
+      debounceMs: config.cache.persistDebounceMs,
+      onError: (error) => logger(`cache snapshot failed: ${error?.message ?? error}`),
+    })
     : null
+  const restoredCacheEntries = cache?.load() ?? 0
+  if (cachePersistPath) logger(`cache persistence: ${cachePersistPath} (restored ${restoredCacheEntries} entries)`)
   const deepRuns = new Map()
   // Follow-up runs reuse the previous run's pages and evidence instead of
   // re-fetching them, so a "expand on point 2" question costs a fraction.
