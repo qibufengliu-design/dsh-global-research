@@ -417,6 +417,22 @@ API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会
 
 ## 更新日志
 
+### 0.8.2（2026-11-15）
+
+- **不传 `mode` 也能认出选型/对比题**：实测同一条问题「Java 后端做 RAG 应用，Spring AI、LangChain4j、Haystack 该怎么选」在不传 `mode` 时被 `classify()` 判成 `concept`（`signals:["fallback:no-signal"]`），`sourcePlan.channels` 因此为空：没有官方定向查询、`docPage` 只有 5 条；显式 `mode:'compare'` 才落到 `tech-selection` 包（`docPage` 10 条、官方查询 2 条）。用户日常不会传 `mode`，所以分类器必须自己认出来。
+  - `lib/strategy.js` 新增 `COMPARE_HINTS`（`该怎么选|怎么选|选哪个|哪个好|哪个更|如何选择|二选一|三选一|还是用|选型|对比|比较|差异|区别|which (one )?should i|\bvs\.?\b`）、`TECH_HINTS`（`java|spring|node|react|vue|python|go|rust|rag|llm|数据库|框架|中间件` 等，刻意比 `DEV_HINTS` 窄）和 `hasOptionList()`（`A、B、C` 或 `A/B/C` 三个并列选项自身也算对比信号）。命中对比措辞**且**命中技术栈 → `tech-selection` +3；只命中对比措辞（如「HBase 和 Cassandra 哪个好」）→ 仍归 `tech-selection` +2。**没有新增 `comparison` kind**：七个 kind 的优先级、策略包与缓存维度都保持不变，而 `tech-selection` 包本来就是做对比的策略（`mode:compare`、`## 方案对比`），把它当成无效词表之外的对照答案。
+  - `classify()` 现在返回 `mode`：显式传入的 mode 永远优先；没传时，落进 `tech-selection` 的对比题建议 `compare`，其余仍是 `explain`。显式 `mode:'explain'`（或其他非 compare 模式）不会被二次猜测，对比信号也不参与打分——用户明确说了要什么。
+  - `lib/pipeline.js` 的 `runResearch({ mode })` 默认值从 `'explain'` 改为不设默认：没传就保持 `undefined` 交给分类器，`resolvedMode = 显式 mode ?? classify().mode`；`stats` 新增 `mode`（有效模式）。`index.js` 先分类一次（纯函数、无 IO），把 `classification` 传给 pipeline，并用**有效 mode** 算缓存键：隐式 compare 与旧的 explain 条目不会互相命中，而 concept 题的键与 0.8.1 逐字节相同。
+- **实测（不带 `--mode`）**：`node scripts/retrieval-check.mjs --question "Java 后端做 RAG 应用，Spring AI、LangChain4j、Haystack 该怎么选" --depth standard`
+
+  ```text
+  adopted tiers: docPage 10 · repoCode 0 · other 0  (doc-index 0 / repo-doc 0 / forum 0 / blog 0 / other 0)
+  queries: 6（语义 4 / 技术 0 / 官方 2） · engineErrors 6 · clusters 11
+  ```
+
+  `docPage` 5 → 10，官方查询 0 → 2，且脚本头现在打印 `mode: compare（classify 推定）`（`--json` 的 `mode` 也改为有效模式）。`SIGNAL_VERSION` 1 → 2（分类信号形状变了）。
+- 测试总数 318（新增 2：`test/strategy.test.js` 的分类规则——该问题→`tech-selection`+`compare`、`A、B、C 该怎么选`→`tech-selection`(对比)+`options:>=3`、无技术词「HBase 和 Cassandra 哪个好」按规则归 `tech-selection`、显式 explain/track 不被覆盖；`test/pipeline.test.js` 的不传 mode 端到端——`stats.questionKind/mode`、`queriesByKind.official ≥ 1`、`site:` 查询与 `官方定向` 行）。
+
 ### 0.8.1（2026-11-15）
 
 - **compare 选项名不再带上中文谓词**：真实输出曾出现 `选项「Haystack 该」在本轮证据中没有可用来源（零证据），未纳入对比`——问题以 `Haystack 该怎么选` 结尾时，按 `|` `/` `、` `vs` `还是` 切出的最后一段把谓词一起带进了选项名，于是 `countOptionHits` 用「Haystack 该」去比对证据，命中必然为 0，零证据提示和对比表都写错名字。`lib/pipeline.js` 的 `cleanOptionToken` 现在对每个候选先按 `/(该怎么|怎么|如何|哪个|哪一种?|选哪个|怎么选|呢|吗|？|\?|。|，|,)/` 的**第一个**匹配截断再 `trim()`，并处理「Java 后端做 RAG 应用，Spring AI」这类逗号前缀（取逗号后带拉丁字母的那段），截断后为空、超过 24 字或全是噪声标点的候选直接丢弃；去重与 ≤5 不变。同一问题现在得到 `Spring AI / LangChain4j / Haystack`，`A、B、C 该怎么选` 得到 `A / B / C`（单个拉丁字母保留），`X vs Y 哪个好` 得到 `X / Y`，`只有 A` 不作为对比题处理。

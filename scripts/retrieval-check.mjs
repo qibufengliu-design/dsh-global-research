@@ -32,7 +32,7 @@ import { createPageFetcher } from '../lib/fetch.js'
 import { runResearch } from '../lib/pipeline.js'
 import { sourceTier } from '../lib/util.js'
 
-export const VERSION = '0.8.1'
+export const VERSION = '0.8.2'
 export const DEPTHS = ['auto', 'quick', 'standard', 'deep']
 // 0.8.1 — the caller normally passes `mode`, and it decides the strategy pack
 // (compare ⇒ tech-selection ⇒ official-docs channels). Without a way to pass it,
@@ -221,7 +221,7 @@ export function usage() {
     '  --question  必填。研究问题（原样交给引擎）',
     '  --focus     可选。逗号分隔的评估维度',
     '  --depth     quick | standard | deep（默认 standard）',
-    '  --mode      explain | compare | track | evaluate（默认交给 classify 的 explain；compare 会选 tech-selection 包）',
+    '  --mode      explain | compare | track | evaluate（可不传：0.8.2 起由 classify 决定，选型/对比题会自动走 compare → tech-selection 包）',
     '  --json      只把 JSON 打到 stdout（日志仍在 stderr）',
     '',
     '退出码：0 = 至少采用 1 条来源；1 = 采用 0 条（检索退化）或运行失败。',
@@ -316,7 +316,7 @@ async function main(argv = process.argv.slice(2)) {
       question: options.question,
       focus: options.focus,
       depth: result.depthUsed ?? options.depth,
-      mode: options.mode || 'explain',
+      mode: stats.mode ?? options.mode ?? 'explain',
       engines: engineNames,
       tavilyKeySource: tkey.source,
       elapsedMs,
@@ -343,7 +343,7 @@ async function main(argv = process.argv.slice(2)) {
   const lines = [
     `retrieval-check ${VERSION} · ${new Date().toISOString()}`,
     `question: ${options.question}`,
-    `focus: ${options.focus.length > 0 ? options.focus.join('、') : '未指定'} · depth: ${result.depthUsed ?? options.depth} · mode: ${options.mode || 'explain'}`,
+    `focus: ${options.focus.length > 0 ? options.focus.join('、') : '未指定'} · depth: ${result.depthUsed ?? options.depth} · mode: ${stats.mode ?? options.mode ?? 'explain'}${options.mode ? '' : '（classify 推定）'}`,
     `engines: ${engineNames.join(',')}${tkey.source === 'profile' ? '（tavily key 来自 profile patch）' : tkey.source === 'env' ? '（tavily key 来自 TAVILY_API_KEY）' : '（只跑了 ddg-html）'}`,
     '',
     `identified ${summary.identified} · deduped ${summary.deduped} · readable ${summary.readable} · adopted ${summary.adopted}`,

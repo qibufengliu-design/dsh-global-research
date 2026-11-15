@@ -204,6 +204,41 @@ test('classify reports the signals and keywords that drove the kind', () => {
   assert.equal(classify({ question: 'React 还是 Vue', mode: 'compare' }).questionKind, 'tech-selection')
 })
 
+// 0.8.2 — the reported gap: a selection question with no `mode` fell through to
+// concept because DEEP_SIGNALS never matched "该怎么选". Comparison wording plus
+// a stack word is now decisive, and comparison wording alone still routes to the
+// selection pack (there is no `comparison` kind, and that pack is the policy
+// that actually compares options).
+test('selection/comparison wording is classified without an explicit mode (0.8.2)', () => {
+  const rag = classify({ question: 'Java 后端做 RAG 应用，Spring AI、LangChain4j、Haystack 该怎么选' })
+  assert.equal(rag.questionKind, 'tech-selection')
+  assert.equal(rag.mode, 'compare')
+  assert.equal(rag.source, 'regex')
+  assert.ok(rag.signals.includes('kw:compare'), JSON.stringify(rag.signals))
+  assert.ok(rag.signals.includes('kw:tech'), JSON.stringify(rag.signals))
+
+  // No technology word: still a comparison, so still the selection pack.
+  const hbase = classify({ question: 'HBase 和 Cassandra 哪个好' })
+  assert.equal(hbase.questionKind, 'tech-selection')
+  assert.equal(hbase.mode, 'compare')
+  assert.ok(hbase.signals.includes('kw:compare:no-tech'), JSON.stringify(hbase.signals))
+
+  // Three parallel options are themselves a comparison signal.
+  const list = classify({ question: 'A、B、C 该怎么选' })
+  assert.equal(list.questionKind, 'tech-selection')
+  assert.equal(list.mode, 'compare')
+  assert.ok(list.signals.includes('options:>=3'), JSON.stringify(list.signals))
+  assert.ok(classify({ question: 'A/B/C 哪个好' }).signals.includes('options:>=3'))
+
+  // Concept questions keep explain, and an explicit mode is never second-guessed.
+  assert.equal(classify({ question: 'TypeScript 是什么？' }).mode, 'explain')
+  const explained = classify({ question: 'Java 后端做 RAG 应用，Spring AI、LangChain4j、Haystack 该怎么选', mode: 'explain' })
+  assert.equal(explained.questionKind, 'concept')
+  assert.equal(explained.mode, 'explain')
+  // Timing words under an explicit non-compare mode stay with the time pack.
+  assert.equal(classify({ question: 'HBase 和 Cassandra 哪个好', mode: 'track' }).questionKind, 'fresh-data')
+})
+
 /* ------------------------------------------------------------------ *
  * The wiring test: runResearch() has to pass the resolved pack into
  * resolveDepth(). The unit test above proves applyDepthBias() works; this

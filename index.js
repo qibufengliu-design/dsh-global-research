@@ -14,7 +14,7 @@ import { ResearchSessions } from './lib/sessions.js'
 import { validateConfig } from './lib/config.js'
 import { Config } from './lib/schema.js'
 import { configureDomainTrust, isTimeSensitive, uniqueStrings } from './lib/util.js'
-import { normalizeMode } from './lib/strategy.js'
+import { classify, normalizeMode } from './lib/strategy.js'
 import { readFileSync } from 'node:fs';
 
 const BUILD_ID = (() => {
@@ -250,8 +250,15 @@ export function apply(ctx, rawConfig = {}) {
       const depth = args?.depth ?? liveDepthDefault()
       const outputLanguage = args?.outputLanguage ?? 'auto'
       // An illegal mode must not leak into the prompt or the cache key: normalize
-      // once here, then use the same value for both.
-      const mode = normalizeMode(args?.mode ?? 'explain')
+      // once here, then use the same value for both. 0.8.2 — an omitted mode is
+      // left undefined so the classifier can infer `compare` for a selection /
+      // comparison question; the inferred mode is part of the cache key too, so
+      // an implicit compare run is never served from the old explain entry.
+      const requestedMode = args?.mode === undefined || args?.mode === null || String(args.mode).trim() === ''
+        ? undefined
+        : normalizeMode(args.mode)
+      const classification = classify({ question, focus, mode: requestedMode })
+      const mode = requestedMode ?? normalizeMode(classification.mode)
       // "Latest / price / version" answers go stale in minutes; never serve
       // those from cache (a false positive only costs one re-run).
       const timeSensitive = isTimeSensitive(`${question} ${focus.join(' ')}`)
@@ -281,7 +288,8 @@ export function apply(ctx, rawConfig = {}) {
         focus,
         depth,
         outputLanguage,
-        mode,
+        mode: requestedMode,
+        classification,
         context,
         userText,
         resume,

@@ -1611,3 +1611,38 @@ test('officialBackstopQueries only uses declared bases/seeds (0.8.1)', () => {
   // A pack with no official channel has nothing to fall back to.
   assert.deepEqual(officialBackstopQueries(RAG_QUESTION, [], resolveStrategy({ questionKind: 'concept', depth: 'standard' })), [])
 })
+
+// 0.8.2 — the reported regression: the user does not pass `mode`, and classify
+// used to return concept, so there was no official channel for the 0.8.1
+// backstop to draw a site: query from. This is the whole fix end to end.
+test('an omitted mode classifies the selection question and still gets official queries (0.8.2)', async () => {
+  const seen = []
+  const config = baseConfig()
+  config.__engines = [queryRecordingEngine(seen)]
+  const result = await runResearch({
+    question: RAG_QUESTION,
+    depth: 'standard',
+    config,
+    llm: fakeLlm(planAwareResponder({
+      queries: [
+        { q: RAG_QUESTION, kind: 'semantic' },
+        { q: 'Spring AI vs LangChain4j vs Haystack for Java RAG', kind: 'technical' },
+      ],
+      directUrls: [],
+      reason: '只给了语义与技术',
+    })),
+    selection,
+    logger: () => {},
+  })
+  assert.equal(result.stats.questionKind, 'tech-selection', JSON.stringify(result.stats.signals))
+  assert.equal(result.stats.mode, 'compare')
+  assert.ok(result.stats.queriesByKind.official >= 1, JSON.stringify(result.stats.queriesByKind))
+  assert.equal(
+    result.stats.queriesByKind.semantic + result.stats.queriesByKind.technical + result.stats.queriesByKind.official,
+    result.stats.queries,
+  )
+  assert.ok(seen.some((query) => query.startsWith('site:')), seen.join(' | '))
+  assert.match(result.brief, /官方定向 [1-9]\d*$/m)
+  // The classified pack also keeps its declared sections.
+  assert.match(result.brief, /## 方案对比/)
+})
