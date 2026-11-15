@@ -191,7 +191,7 @@ config:
 Get-ChildItem test\*.test.js | ForEach-Object { node $_.FullName }
 ```
 
-覆盖：URL 规范化与内容去重、预算、JSON 修复、引用校验、DDG 解析、引擎失败隔离与自动禁用、付费引擎解析与 key 来源、垂直源选择与解析（GitHub/arXiv/StackExchange/npm/HN/PyPI，含垃圾 payload、纯中文 query 跳过、SE 标签映射与 intitle 回退、单源失败隔离）、管线十步（假引擎/假抓取/假模型，含检索计划优先与 ghost citation 清理）、阶段耗时（六个阶段的整数毫秒、快跑不进简报）、官方链接挖掘与预算边界、EUR-Lex Cellar 映射与回退、EUR-Lex 摘要页/搜索页降权与 ELI 原文优先、EU 站点语言前缀归一、法规问题回补预留页位、无一手源时回补强制官方域名 query、垂直源正文兜底与选择位保护、配置校验（类型强转/夹取/未知键 warning）、域名信任名单与黑名单过滤、缓存（key 归一、TTL、LRU、命中不调模型、focus 不同绕过、可关闭）、client 卡片解析（置信度徽章/来源数/耗时/失败与运行中状态/无分段兜底/阶段 chip 与缺段不渲染）、阶段摘要格式（>0.5s、最多 4 段、按阶段顺序输出）、`apply` 注册、skill 注册与端到端 execute、sourcePlan 通道声明、sitemap 解析与关键词打分、sitemap 预算/失败隔离、sitemap base 相对发现与内容校验、跨主机 `<loc>` 改写与 `docHostRewrite` 开关、按题选择文档 base（`pickDocBases`）、证据档位（`sourceTier` 24 个 URL 的档位表与 `doc-page > repo-doc > repo-code` 排序）、tech-selection 的 doc-page 槽位与无候选不填充、用户提供资料作为证据。共 294 例。
+覆盖：URL 规范化与内容去重、预算、JSON 修复、引用校验、DDG 解析、引擎失败隔离与自动禁用、付费引擎解析与 key 来源、垂直源选择与解析（GitHub/arXiv/StackExchange/npm/HN/PyPI，含垃圾 payload、纯中文 query 跳过、SE 标签映射与 intitle 回退、单源失败隔离）、管线十步（假引擎/假抓取/假模型，含检索计划优先与 ghost citation 清理）、阶段耗时（六个阶段的整数毫秒、快跑不进简报）、官方链接挖掘与预算边界、EUR-Lex Cellar 映射与回退、EUR-Lex 摘要页/搜索页降权与 ELI 原文优先、EU 站点语言前缀归一、法规问题回补预留页位、无一手源时回补强制官方域名 query、垂直源正文兜底与选择位保护、配置校验（类型强转/夹取/未知键 warning）、域名信任名单与黑名单过滤、缓存（key 归一、TTL、LRU、命中不调模型、focus 不同绕过、可关闭）、client 卡片解析（置信度徽章/来源数/耗时/失败与运行中状态/无分段兜底/阶段 chip 与缺段不渲染）、阶段摘要格式（>0.5s、最多 4 段、按阶段顺序输出）、`apply` 注册、skill 注册与端到端 execute、sourcePlan 通道声明、sitemap 解析与关键词打分、sitemap 预算/失败隔离、sitemap base 相对发现与内容校验、跨主机 `<loc>` 改写与 `docHostRewrite` 开关、按题选择文档 base（`pickDocBases`）、证据档位（`sourceTier` 24 个 URL 的档位表与 `doc-page > repo-doc > repo-code` 排序）、tech-selection 的 doc-page 槽位与无候选不填充、用户提供资料作为证据、价格题分类与 pricing 通道 / official-docs 拦截（0.8.3）。共 320 例。
 
 ## 真实网络 e2e
 
@@ -255,7 +255,7 @@ $env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
 | 通道 | 适用 questionKind | method | 目标 | maxPages |
 | --- | --- | --- | --- | --- |
 | `official-docs` | tech-selection / learning | sitemap | bases 带 tags，按问题排序（0.6.8）：spring-ai/reference（spring-ai/ai/rag/vector）、spring-boot（spring-boot/boot/web/jpa）、docs.langchain4j.dev（langchain4j/llm/rag/agent）、通用 docs.spring.io；learning 用 react.dev / nodejs.org / docs.python.org | 3 |
-| `pricing` | fresh-data | direct | seeds: api-docs.deepseek.com、help.aliyun.com、bigmodel.cn、www.volcengine.com 的价目页 | 4 |
+| `pricing` | fresh-data / pricing（0.8.3） | direct | seeds: api-docs.deepseek.com、help.aliyun.com、bigmodel.cn、www.volcengine.com 的价目页 | 4 |
 | `standards` | legal | direct | hosts: prisma-statement.org, cochrane.org, eric.ed.gov, owasp.org, eur-lex.europa.eu | 2 |
 | `papers` | contested | api | hosts: arxiv.org, openalex.org, pmc.ncbi.nlm.nih.gov | 2 |
 
@@ -416,6 +416,37 @@ API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会
 - 万一过期页仍进了「## 参考」（全页过期或已被采用），该行行尾标 `（已过期，仅作参考）`。
 
 ## 更新日志
+
+### 0.8.3（2026-11-15）
+
+- **价格题不再被判成选型题，也不再被 Java 文档通道劫持**：0.8.2 实测 `node scripts/retrieval-check.mjs --question "国内大模型 API 价格对比：qwen、豆包、deepseek 哪家便宜" --depth standard` 得到 `adopted: docPage 9`，前 9 条全是 `docs.langchain4j.dev` / `docs.spring.io` 的 Java 文档页——问题里的「对比」命中对比措辞、「大模型」命中技术栈，于是 `classify()` 判成 `tech-selection`，走 `official-docs` 通道；问的是 API 价格，答的是 Java 手册。
+  - `lib/strategies.js` 新增第八个 kind `pricing`（`QUESTION_KINDS` 里排在 `fresh-data` 之后，`KIND_PRIORITY` 里在 `tech-selection` 之前），并给它一个策略包：`queries.extraTemplates`（`{q} 价格对比 {year}`、`{q} api pricing per token`）、只声明 `pricing` 一条 `direct` 通道（hosts `api-docs.deepseek.com` / `help.aliyun.com` / `bigmodel.cn` / `www.volcengine.com`，seeds 复用 `PRICING_SEEDS`，`maxPages 4`）、`synthesis.dateRule`、`validation.staleDays 365`、`gates.gate 'medium'`。
+  - `lib/strategy.js` 的 `PRICING_HINTS` 扩到价格/成本词表：`价格|定价|收费|多少钱|便宜|成本|费用|单价|价位|报价|计费|免费额度|每百万|每 tokens|per token|/1k tokens|price|pricing|cost|billing`（保留原有 `售价|费率|按量|元/|美元/|百万 tokens` 等）。`classify()` 命中价格词给 `pricing` **+6 并覆盖** `tech-selection`（信号 `kw:pricing:override`），即使同时出现 Spring / LLM / LangChain4j / RAG；`legal` / `troubleshoot` / `contested` 仍是更高优先级（`PRICE_DECISIVE_KINDS`：「CRA 合规要花多少钱」还是合规题），显式 `llmKind` 覆盖仍然最终生效。
+  - **对比措辞 → `compare`**：新增 `PRICE_COMPARE_HINTS`（`哪家便宜|谁便宜|哪个更划算|价格…对比|对比|比较|cheaper|cheapest|compare`）；价格题命中时 `classify().mode` 建议 `compare`，否则 `explain`（「Spring AI 收费吗」→ `pricing` + `explain`）。
+  - **文档通道兜底**：`resolveStrategy()` 只要问题命中价格词（`isPricingQuestion(question)`），无论调用方传的 `questionKind` 是什么，都会把 `official-docs` 从 `sourcePlan.channels` 里删掉、并把 `pricing` 通道提到最前——即使硬传 `questionKind:'tech-selection'`，「Spring AI 和 LangChain4j 收费对比」也只解析出 `pricing` 通道、0 个文档站；没有价格词时行为逐字不变（`tech-selection` 仍解析出 `['official-docs']`，其余 kind 的 `officialSeeds` 仍为空）。
+  - `classify()` 的返回值多一个 `pricing` 布尔；`SIGNAL_VERSION` 2 → 3（分类信号形状变了，简报缓存键随之失效）。
+- **实测（不带 `--mode`）**：
+
+  ```text
+  $ node scripts/retrieval-check.mjs --question "国内大模型 API 价格对比：qwen、豆包、deepseek 哪家便宜" --depth standard
+  retrieval-check 0.8.3 · 2026-11-15T13:10:42.596Z
+  focus: 未指定 · depth: standard · mode: compare（classify 推定）
+
+  identified 54 · deduped 47 · readable 12 · adopted 10
+  adopted tiers: docPage 10 · repoCode 0 · other 0  (doc-index 0 / repo-doc 0 / forum 0 / blog 0 / other 0)
+  queries: 6（语义 4 / 技术 0 / 官方 2） · engineErrors 7 · clusters 12
+  ```
+
+  前 10 条采用来源全部是厂商价目页/价格文档（`api-docs.deepseek.com/quick_start/pricing`、`help.aliyun.com/zh/model-studio/models`、`www.volcengine.com/docs/82379/1099320`、`help.aliyun.com/zh/model-studio/model-pricing` 等），**`docs.spring.io` / `docs.langchain4j.dev` 一条都没有**。对照的 A 题（`Java 后端做 RAG 应用，Spring AI、LangChain4j、Haystack 该怎么选`）保持原样：
+
+  ```text
+  retrieval-check 0.8.3 · 2026-11-15T13:11:39.832Z
+  adopted tiers: docPage 10 · repoCode 0 · other 0  (doc-index 0 / repo-doc 0 / forum 0 / blog 0 / other 0)
+  queries: 6（语义 4 / 技术 0 / 官方 2） · engineErrors 6 · clusters 11
+  ```
+
+  即「价格题修好了、选型题没被打扰」：A 题仍是 `tech-selection` + `compare`、官方查询 2 条、采用 `docs.spring.io/spring-ai` / `docs.langchain4j.dev`。
+- 测试总数 320（新增 2：`test/strategy.test.js` 的分类与通道断言——价格题→`pricing`+`compare`、「Spring AI 收费吗」→`pricing`+`explain`、「两家价格谁便宜」→`pricing`+`compare`、法律题仍压过价格词、pricing 包 channels 含 `pricing` 不含 `official-docs`、硬传 `tech-selection` 同样被拦、A 题 channels 仍是 `['official-docs']`、词表覆盖 `免费额度`/`每百万 token`/`per token`/`/1k tokens`/`成本`；`test/pipeline.test.js` 的端到端——价格题不产生 `site:docs.spring.io` 查询、会产生 `site:` 官方价目页查询、不触发 sitemap）。
 
 ### 0.8.2（2026-11-15）
 

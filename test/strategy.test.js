@@ -34,10 +34,11 @@ function oldFollowUp(question) {
   return OLD_FOLLOW_UP.test(text)
 }
 
-test('classify recognises all seven question kinds', () => {
+test('classify recognises every shipped question kind', () => {
   const cases = [
     ['pnpm vs yarn vs bun，2026 年该选哪个？', 'tech-selection'],
     ['Node 22 现在的最新版本是多少？', 'fresh-data'],
+    ['qwen、豆包、deepseek 的 API 价格谁便宜？', 'pricing'],
     ['有人说 TypeScript 比 JavaScript 更好，这种说法有争议吗？', 'contested'],
     ['CRA 合规要求有哪些？', 'legal'],
     ['升级到 Node 22 后 build 报错怎么修', 'troubleshoot'],
@@ -237,6 +238,61 @@ test('selection/comparison wording is classified without an explicit mode (0.8.2
   assert.equal(explained.mode, 'explain')
   // Timing words under an explicit non-compare mode stay with the time pack.
   assert.equal(classify({ question: 'HBase 和 Cassandra 哪个好', mode: 'track' }).questionKind, 'fresh-data')
+})
+
+// 0.8.3 — the reported misclassification: "国内大模型 API 价格对比：qwen、豆包、
+// deepseek 哪家便宜" was read as tech-selection (the stack word + 对比 won), so
+// the official-docs channel crawled docs.spring.io / docs.langchain4j.dev for a
+// question about money: nine adopted doc pages, none about pricing.
+test('price questions are pricing, never a tech selection, and drop the doc channel (0.8.3)', () => {
+  const price = '国内大模型 API 价格对比：qwen、豆包、deepseek 哪家便宜'
+  const result = classify({ question: price })
+  assert.equal(result.questionKind, 'pricing')
+  assert.equal(result.mode, 'compare')
+  assert.equal(result.source, 'regex')
+  assert.equal(result.pricing, true)
+  assert.ok(result.signals.includes('kw:pricing'), JSON.stringify(result.signals))
+  // The stack word and the comparison verb are still scored — they just lose.
+  assert.ok(result.scores['tech-selection'] > 0, JSON.stringify(result.scores))
+  assert.ok(result.scores.pricing > 0, JSON.stringify(result.scores))
+
+  // A stack name does not pull a price question back to tech-selection.
+  const spring = classify({ question: 'Spring AI 收费吗' })
+  assert.equal(spring.questionKind, 'pricing')
+  assert.equal(spring.mode, 'explain')
+
+  // "Whose price is cheaper" is a compare run with the price pack.
+  const twoVendors = classify({ question: '两家价格谁便宜' })
+  assert.equal(twoVendors.questionKind, 'pricing')
+  assert.equal(twoVendors.mode, 'compare')
+
+  // A legal question that mentions money keeps its legal precedence.
+  assert.equal(classify({ question: 'CRA 合规要花多少钱' }).questionKind, 'legal')
+
+  // The resolved pack keeps the price channel and never the documentation one.
+  const pricing = resolveStrategy({ questionKind: result.questionKind, depth: 'standard', mode: result.mode, question: price })
+  const pricingChannels = pricing.sourcePlan.channels.map((channel) => channel.id)
+  assert.ok(pricingChannels.includes('pricing'), JSON.stringify(pricingChannels))
+  assert.ok(!pricingChannels.includes('official-docs'), JSON.stringify(pricingChannels))
+
+  // Even a forced tech-selection (caller override) cannot keep the docs channel.
+  const forced = resolveStrategy({ questionKind: 'tech-selection', depth: 'standard', question: 'Spring AI 和 LangChain4j 收费对比' })
+  const forcedChannels = forced.sourcePlan.channels.map((channel) => channel.id)
+  assert.ok(forcedChannels.includes('pricing'), JSON.stringify(forcedChannels))
+  assert.ok(!forcedChannels.includes('official-docs'), JSON.stringify(forcedChannels))
+
+  // A non-price selection question is untouched (the A question of the report).
+  const selection = resolveStrategy({
+    questionKind: 'tech-selection',
+    depth: 'standard',
+    question: 'Java 后端做 RAG 应用，Spring AI、LangChain4j、Haystack 该怎么选',
+  })
+  assert.deepEqual(selection.sourcePlan.channels.map((channel) => channel.id), ['official-docs'])
+
+  // The widened vocabulary from the task, one token at a time.
+  for (const text of ['免费额度有多少', '每百万 token 多少钱', 'per token 的价格', '/1k tokens 怎么计费', '成本']) {
+    assert.equal(isPricingQuestion(text), true, text)
+  }
 })
 
 /* ------------------------------------------------------------------ *

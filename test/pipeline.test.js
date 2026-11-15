@@ -1646,3 +1646,51 @@ test('an omitted mode classifies the selection question and still gets official 
   // The classified pack also keeps its declared sections.
   assert.match(result.brief, /## 方案对比/)
 })
+
+// 0.8.3 — the reported misclassification, end to end. The price question used to
+// classify as tech-selection, whose official-docs channel produced
+// `site:docs.spring.io …` / `site:docs.langchain4j.dev …` queries; the run then
+// adopted nine Java doc pages and answered nothing about prices. The price
+// pack must query a vendor price page and must not touch the docs site.
+test('a price question never queries the Java docs site and does query a vendor price page (0.8.3)', async () => {
+  const seen = []
+  const rawRequests = []
+  const config = baseConfig({
+    __fetchRaw: async (url) => {
+      rawRequests.push(String(url))
+      return { status: 404, body: '' }
+    },
+  })
+  config.__engines = [queryRecordingEngine(seen)]
+  const question = '国内大模型 API 价格对比：qwen、豆包、deepseek 哪家便宜'
+  const result = await runResearch({
+    question,
+    depth: 'standard',
+    config,
+    llm: fakeLlm(planAwareResponder({
+      queries: [{ q: question, kind: 'semantic' }],
+      directUrls: [],
+      reason: '只给语义，官方查询走 pack 兜底',
+    })),
+    selection,
+    logger: () => {},
+  })
+
+  assert.equal(result.stats.questionKind, 'pricing', JSON.stringify(result.stats.signals))
+  assert.equal(result.stats.mode, 'compare')
+
+  // No documentation-site query at all — neither from the pack nor the backstop.
+  assert.ok(
+    !seen.some((query) => /docs\.spring\.io|docs\.langchain4j\.dev/.test(query)),
+    `doc-site query leaked: ${seen.join(' | ')}`,
+  )
+  // The declared price hosts are used instead (0.8.1 backstop on the price pack).
+  const official = seen.filter((query) => query.startsWith('site:'))
+  assert.ok(official.length >= 1, `no official query: ${seen.join(' | ')}`)
+  assert.ok(
+    official.some((query) => /^site:(api-docs\.deepseek\.com|help\.aliyun\.com|bigmodel\.cn|www\.volcengine\.com) /.test(query)),
+    `price page not queried: ${seen.join(' | ')}`,
+  )
+  // Step 2a (sitemap crawl) is never reached for this kind: no bases were kept.
+  assert.deepEqual(rawRequests.filter((url) => /sitemap/i.test(url)), [])
+})
