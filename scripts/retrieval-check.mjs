@@ -32,8 +32,13 @@ import { createPageFetcher } from '../lib/fetch.js'
 import { runResearch } from '../lib/pipeline.js'
 import { sourceTier } from '../lib/util.js'
 
-export const VERSION = '0.8.0'
+export const VERSION = '0.8.1'
 export const DEPTHS = ['auto', 'quick', 'standard', 'deep']
+// 0.8.1 — the caller normally passes `mode`, and it decides the strategy pack
+// (compare ⇒ tech-selection ⇒ official-docs channels). Without a way to pass it,
+// a script run always landed on the concept pack and could never exercise the
+// official-query path the real reports come from.
+export const MODES = ['explain', 'compare', 'track', 'evaluate']
 /** DSH's desktop profile patch; the plugin's own keys live in its `config.keys`. */
 export const PROFILE_PATCH = join(process.env.USERPROFILE ?? homedir(), '.dsh', 'profiles', 'desktop', 'cordis.patch.yml')
 
@@ -177,7 +182,7 @@ export function exitCodeFor(summary) {
 
 /** Hand-rolled flag parser: `--flag value` and `--flag=value` both work. */
 export function parseArgs(argv = []) {
-  const options = { question: '', focus: [], depth: 'standard', json: false }
+  const options = { question: '', focus: [], depth: 'standard', mode: '', json: false }
   const take = (index, inline) => (inline !== undefined ? [inline, index] : [argv[index + 1], index + 1])
   for (let index = 0; index < argv.length; index += 1) {
     const arg = String(argv[index] ?? '')
@@ -194,6 +199,10 @@ export function parseArgs(argv = []) {
     } else if (name === '--depth') {
       const [value, next] = take(index, inline)
       options.depth = String(value ?? '').trim() || 'standard'
+      index = next
+    } else if (name === '--mode') {
+      const [value, next] = take(index, inline)
+      options.mode = String(value ?? '').trim()
       index = next
     } else if (name === '--help' || name === '-h') {
       options.help = true
@@ -212,6 +221,7 @@ export function usage() {
     '  --question  必填。研究问题（原样交给引擎）',
     '  --focus     可选。逗号分隔的评估维度',
     '  --depth     quick | standard | deep（默认 standard）',
+    '  --mode      explain | compare | track | evaluate（默认交给 classify 的 explain；compare 会选 tech-selection 包）',
     '  --json      只把 JSON 打到 stdout（日志仍在 stderr）',
     '',
     '退出码：0 = 至少采用 1 条来源；1 = 采用 0 条（检索退化）或运行失败。',
@@ -231,6 +241,10 @@ async function main(argv = process.argv.slice(2)) {
   }
   if (!DEPTHS.includes(options.depth)) {
     console.error(`--depth 只能是 ${DEPTHS.join(' / ')}，收到 ${options.depth}`)
+    return 2
+  }
+  if (options.mode && !MODES.includes(options.mode)) {
+    console.error(`--mode 只能是 ${MODES.join(' / ')}，收到 ${options.mode}`)
     return 2
   }
 
@@ -270,6 +284,7 @@ async function main(argv = process.argv.slice(2)) {
       question: options.question,
       focus: options.focus,
       depth: options.depth,
+      mode: options.mode || undefined,
       config: { ...config, __engines: engines, __fetchPage: fetchPage, __fetchRaw: fetchRaw },
       web: undefined,
       llm: fakeLlm(options.question),
@@ -301,6 +316,7 @@ async function main(argv = process.argv.slice(2)) {
       question: options.question,
       focus: options.focus,
       depth: result.depthUsed ?? options.depth,
+      mode: options.mode || 'explain',
       engines: engineNames,
       tavilyKeySource: tkey.source,
       elapsedMs,
@@ -327,7 +343,7 @@ async function main(argv = process.argv.slice(2)) {
   const lines = [
     `retrieval-check ${VERSION} · ${new Date().toISOString()}`,
     `question: ${options.question}`,
-    `focus: ${options.focus.length > 0 ? options.focus.join('、') : '未指定'} · depth: ${result.depthUsed ?? options.depth}`,
+    `focus: ${options.focus.length > 0 ? options.focus.join('、') : '未指定'} · depth: ${result.depthUsed ?? options.depth} · mode: ${options.mode || 'explain'}`,
     `engines: ${engineNames.join(',')}${tkey.source === 'profile' ? '（tavily key 来自 profile patch）' : tkey.source === 'env' ? '（tavily key 来自 TAVILY_API_KEY）' : '（只跑了 ddg-html）'}`,
     '',
     `identified ${summary.identified} · deduped ${summary.deduped} · readable ${summary.readable} · adopted ${summary.adopted}`,

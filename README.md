@@ -417,6 +417,13 @@ API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会
 
 ## 更新日志
 
+### 0.8.1（2026-11-15）
+
+- **compare 选项名不再带上中文谓词**：真实输出曾出现 `选项「Haystack 该」在本轮证据中没有可用来源（零证据），未纳入对比`——问题以 `Haystack 该怎么选` 结尾时，按 `|` `/` `、` `vs` `还是` 切出的最后一段把谓词一起带进了选项名，于是 `countOptionHits` 用「Haystack 该」去比对证据，命中必然为 0，零证据提示和对比表都写错名字。`lib/pipeline.js` 的 `cleanOptionToken` 现在对每个候选先按 `/(该怎么|怎么|如何|哪个|哪一种?|选哪个|怎么选|呢|吗|？|\?|。|，|,)/` 的**第一个**匹配截断再 `trim()`，并处理「Java 后端做 RAG 应用，Spring AI」这类逗号前缀（取逗号后带拉丁字母的那段），截断后为空、超过 24 字或全是噪声标点的候选直接丢弃；去重与 ≤5 不变。同一问题现在得到 `Spring AI / LangChain4j / Haystack`，`A、B、C 该怎么选` 得到 `A / B / C`（单个拉丁字母保留），`X vs Y 哪个好` 得到 `X / Y`，`只有 A` 不作为对比题处理。
+- **planner 漏掉 `official` 时的兜底查询**：真实输出曾出现 `查询 中文语义 3 / 英文技术 3 / 官方定向 0`——`planPrompt` 要求「2–3 条定向官方域名 query」，但模型只回中文/英文时，合并后的查询里没有一条 `site:`，策略里声明的官方文档站一次都没被定向到。`lib/pipeline.js` 的查询合并处在 `queriesByKind.official === 0` 且 `strategy.sourcePlan.channels` 含 `official-docs` / `pricing` / `standards` 时，从该通道**已声明**的 `bases` / `seeds` 取前 2 个 host（不碰 `hosts`，避免把 standards 名单猜成检索目标），生成 `site:<host> <core-term>` 追加到查询尾部；core-term 取 `latinTopic(question + focus)`，没有拉丁词时取问题前 20 字。追加受 `profile.queries` 上限约束（按 depth 为 2 / 6 / 16），满了先换掉**最后一条 `technical`**；planner 一条 technical 都没给（报告里的情形：6 条全是中文语义）时换掉最后一条任意类查询——总数不变，`official` 不再是 0。计数归入 `official`，`stats.queriesByKind` 与最终实际发出的查询逐条对齐（`> 检索流程：` 行不会再出现 `官方定向 0`）。prompt 措辞未改；`concept`/默认策略没有官方通道，行为保持原样。
+- **回归脚本可复现 `mode`**（0.8.1）：`scripts/retrieval-check.mjs` 增 `--mode explain|compare|track|evaluate`。此前脚本不传 `mode`，真实报告里的 `官方定向 0` 走的是 `compare → tech-selection` 包（策略声明了 official-docs 通道），脚本却总是落回 `concept`（无官方通道），既复现不出也验证不了这条修复；现在 `--mode compare` 能跑同一条路径（输出头多一段 `· mode:`，JSON 也多一个 `mode` 字段）。
+- 测试总数 316（新增 6：`compareOptions` 的谓词截断与逗号前缀、零证据 gap 用截断后的选项名、planner 只给 semantic/technical 时兜底出 `site:` 且不改总数、全是语义且预算已满时仍然出官方查询、已有一条 official 时不重复追加、`officialBackstopQueries` 只认已声明的 bases/seeds 与无官方通道时为空；`--mode` 并入原有 parseArgs 用例）。
+
 ### 0.8.0（2026-11-15）
 
 - **可复跑的检索回归脚本**：`scripts/retrieval-check.mjs` 把**真实引擎 + 真实抓页器**接进 `runResearch`，只把模型换成假客户端，于是「检索与选页」成为唯一变量——不必每次跑完整 2 分钟研究，也不需要可用的 LLM key：

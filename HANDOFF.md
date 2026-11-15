@@ -2,7 +2,7 @@
 
 ## 一句话状态
 
-插件可日常使用（P0–P8 + 0.6.x + 0.7.0 + 0.7.1 + 0.8.0 全部完成），**已推送到 GitHub**（`main` 随 0.6.8 推过；0.7.0、0.7.1、0.8.0 尚未推）。0.8.0 起有 `scripts/retrieval-check.mjs`：不跑完整研究、不花 LLM，就能验证「检索与选页」有没有退化。
+插件可日常使用（P0–P8 + 0.6.x + 0.7.0 + 0.7.1 + 0.8.0 + 0.8.1 全部完成），**已推送到 GitHub**（`main` 随 0.6.8 推过；0.7.0、0.7.1、0.8.0、0.8.1 尚未推）。0.8.0 起有 `scripts/retrieval-check.mjs`：不跑完整研究、不花 LLM，就能验证「检索与选页」有没有退化；0.8.1 用它抓到并修掉了两处真实回归（compare 选项名带中文谓词、planner 不产出官方定向查询）。
 
 ## 仓库与版本
 
@@ -22,7 +22,8 @@
   - `bf91614` docs: handoff 0.7.0 commit hash
   - 0.7.1（本次提交）零证据对比提示 + 缓存落盘 + planner 查询三分类；hash 在此文件改写后生成，未回填
   - 0.8.0（本次提交）检索回归脚本 `scripts/retrieval-check.mjs` + 纯函数单测；hash 在此文件改写后生成，未回填
-- 测试：18 个文件逐个跑，**310 例全绿**（`node --test test/` 与 `node --test test/<file>` 在沙箱都会 EPERM，只能 `node test/<file>.test.js` 让 node:test 在进程内跑）
+  - 0.8.1（本次提交）compare 选项名截断 + planner 官方定向查询兜底（`officialBackstopQueries`）；hash 在此文件改写后生成，未回填
+- 测试：18 个文件逐个跑，**316 例全绿**（`node --test test/` 与 `node --test test/<file>` 在沙箱都会 EPERM，只能 `node test/<file>.test.js` 让 node:test 在进程内跑）
 
 ## 推送
 
@@ -47,6 +48,7 @@ git -c http.sslBackend=openssl push origin main
 8. **缓存可落盘**（0.7.1，默认关）：`cache.persistPath` 非空时启动读回、`set/clear` 防抖原子写；过期条目与坏快照都不会污染进程。
 9. **检索计划可审计**（0.7.1）：planner 给每条 query 标 semantic/technical/official，`> 检索流程：` 行尾多一段 `· 查询 中文语义 a / 英文技术 b / 官方定向 c`。
 10. **检索回归可复跑**（0.8.0）：`node scripts/retrieval-check.mjs --question "…" [--focus "a,b"] [--depth standard] [--json]` 用真实引擎 + 真实抓页器和假模型跑完整 `runResearch`，输出四数、采用来源的 `docPage/repoCode/other` 拆分、垂直源命中与前 10 条 URL 及档位；采用 0 条退出码 1。tavily key 先取 `TAVILY_API_KEY`，再取桌面 profile 的 `keys.tavily`（裸值/引号都认），都没有就只跑 ddg-html 并说明。单测不联网，只测纯函数 `summarize/exitCodeFor/tavilyKeyFromPatch/parseArgs`。
+11. **两处真实回归修掉**（0.8.1，都是上面那个脚本抓出来的）：对比题的问题尾巴不再污染选项名（`Haystack 该` → `Haystack`，`compareOptions` 按 `该怎么/怎么/如何/哪个/…` 第一次匹配截断，逗号前缀取拉丁段）；planner 只回中文/英文查询时，用策略里已声明的官方通道 `bases`/`seeds` 兜底生成最多 2 条 `site:<host> <core-term>`（占 `profile.queries` 预算，满了替换最后一条 technical），`官方定向 0` 不再出现，`stats.queriesByKind` 与最终查询一致。
 
 ## 已知缺口（不是 bug，是数据/结构限制）
 
@@ -56,7 +58,7 @@ git -c http.sslBackend=openssl push origin main
 
 ## 下次接着做
 
-- 推送本地提交（0.7.0 之后又多了 0.7.1 与 0.8.0 的 2 个）；
-- 日常自检：怀疑「检索变差」时先跑 `node scripts/retrieval-check.mjs --question "…"`，看 `docPage/repoCode` 拆分与四数，别先跑完整研究（0.8.0）。
+- 推送本地提交（0.7.0 之后又多了 0.7.1、0.8.0、0.8.1 的 3 个）；
+- 日常自检：怀疑「检索变差」时先跑 `node scripts/retrieval-check.mjs --question "…"`，看 `docPage/repoCode` 拆分与四数，别先跑完整研究（0.8.0）；`queries:` 行的「官方定向」是否为 0 是 0.8.1 的专项信号。
 - 可选：`text` 参数做 UI 入口。
 - 运行手册与细节：`D:\Total\docs\superpowers\specs\2026-11-15-regression-0.6.md`、`2026-11-15-p5-research-hardening.md`、`2026-11-15-cross-domain-scan.md`。

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { runResearch, groupEvidence, looksLikeFollowUp, extractEvidence, pickDocBases } from '../lib/pipeline.js'
+import { runResearch, groupEvidence, looksLikeFollowUp, extractEvidence, pickDocBases, compareOptions, officialBackstopQueries } from '../lib/pipeline.js'
 import { downgradeConfidence } from '../lib/brief.js'
 import { resolveStrategy } from '../lib/strategy.js'
 import { dedupeHits, rankHits } from '../lib/util.js'
@@ -1468,4 +1468,146 @@ test('an option with no evidence is called out instead of silently dropped (0.7.
   assert.match(result.brief, /^\| bun \| 无证据 \| 无证据 \| 无证据 \|$/m)
   assert.match(result.brief, /^\| pnpm \| 安装快 \[S\d\]/m, 'the evidenced rows keep their citations')
   assert.match(result.brief, /## 未解决[\s\S]*选项「bun」在本轮证据中没有可用来源/)
+})
+
+// 0.8.1 — the tail segment of a compare question carries the verb phrase
+// ("Haystack 该怎么选"), which used to reach the brief as an option name.
+test('compareOptions trims the Chinese predicate off the last option (0.8.1)', () => {
+  assert.deepEqual(compareOptions('A、B、C 该怎么选'), ['A', 'B', 'C'])
+  assert.deepEqual(compareOptions('X vs Y 哪个好'), ['X', 'Y'])
+  assert.deepEqual(compareOptions('只有 A'), [])
+  // The reported regression: 选项「Haystack 该」 instead of 「Haystack」.
+  const real = compareOptions('Java 后端做 RAG 应用，Spring AI、LangChain4j、Haystack 该怎么选')
+  assert.deepEqual(real, ['Spring AI', 'LangChain4j', 'Haystack'], JSON.stringify(real))
+  // The zero-evidence message now names the option, not the leftover predicate.
+  assert.ok(!real.some((option) => /该$/.test(option)), JSON.stringify(real))
+})
+
+test('zero-evidence gap names the trimmed option (0.8.1)', async () => {
+  const config = baseConfig()
+  config.__fetchPage = compareFetcher()
+  const result = await runResearch({
+    question: 'Java 后端做 RAG 应用，Spring AI、LangChain4j、Haystack 该怎么选',
+    depth: 'quick',
+    mode: 'compare',
+    strategy: resolveStrategy({ questionKind: 'tech-selection', depth: 'quick' }),
+    config,
+    llm: fakeLlm(compareResponder),
+    selection,
+    logger: () => {},
+  })
+  const zero = result.gaps.filter((gap) => gap.includes('零证据')).join(' | ')
+  assert.ok(zero.length > 0, JSON.stringify(result.gaps))
+  assert.ok(!/选项「[^」]*该」/.test(zero), zero)
+  assert.ok(!/选项「[^」]*怎么选」/.test(zero), zero)
+})
+
+function queryRecordingEngine(record, urls = ['https://nodejs.org/1', 'https://github.com/x/y']) {
+  return {
+    name: 'fake',
+    available: () => true,
+    search: async (query) => {
+      record.push(String(query))
+      return urls.map((url, index) => ({
+        url, title: FAKE_TITLES[index % FAKE_TITLES.length], snippet: 'snippet', engine: 'fake', rank: index + 1,
+      }))
+    },
+  }
+}
+
+const RAG_QUESTION = 'Java 后端做 RAG 应用，Spring AI、LangChain4j、Haystack 该怎么选'
+
+test('a plan without an official query still gets a site: query from the pack (0.8.1)', async () => {
+  const seen = []
+  const config = baseConfig()
+  config.__engines = [queryRecordingEngine(seen)]
+  const result = await runResearch({
+    question: RAG_QUESTION,
+    depth: 'standard',
+    strategy: resolveStrategy({ questionKind: 'tech-selection', depth: 'standard', question: RAG_QUESTION }),
+    config,
+    llm: fakeLlm(planAwareResponder({
+      queries: [
+        { q: RAG_QUESTION, kind: 'semantic' },
+        { q: 'Spring AI vs LangChain4j vs Haystack for Java RAG', kind: 'technical' },
+      ],
+      directUrls: [],
+      reason: '只给了语义与技术',
+    })),
+    selection,
+    logger: () => {},
+  })
+  const counts = result.stats.queriesByKind
+  assert.ok(counts.official >= 1, JSON.stringify(counts))
+  assert.equal(counts.semantic + counts.technical + counts.official, result.stats.queries)
+  const official = seen.filter((query) => query.startsWith('site:'))
+  assert.ok(official.length >= 1, seen.join(' | '))
+  assert.ok(official.some((query) => query.startsWith('site:docs.spring.io')), seen.join(' | '))
+  // The backstop spends a slot, it does not grow the query budget.
+  assert.ok(seen.length <= 6, seen.join(' | '))
+  assert.match(result.brief, /· 查询 中文语义 \d+ \/ 英文技术 \d+ \/ 官方定向 [1-9]\d*$/m)
+})
+
+test('an official query from the planner is not duplicated by the backstop (0.8.1)', async () => {
+  const seen = []
+  const config = baseConfig()
+  config.__engines = [queryRecordingEngine(seen)]
+  const result = await runResearch({
+    question: RAG_QUESTION,
+    depth: 'standard',
+    strategy: resolveStrategy({ questionKind: 'tech-selection', depth: 'standard', question: RAG_QUESTION }),
+    config,
+    llm: fakeLlm(planAwareResponder({
+      queries: [
+        { q: RAG_QUESTION, kind: 'semantic' },
+        { q: 'Spring AI RAG reference', kind: 'technical' },
+        { q: 'site:docs.spring.io Spring AI RAG', kind: 'official' },
+      ],
+      directUrls: [],
+      reason: '已含官方定向',
+    })),
+    selection,
+    logger: () => {},
+  })
+  assert.equal(seen.filter((query) => query.startsWith('site:docs.spring.io')).length, 1, seen.join(' | '))
+  assert.ok(!seen.some((query) => query.startsWith('site:docs.langchain4j.dev')), seen.join(' | '))
+  assert.equal(result.stats.queriesByKind.official, 1, JSON.stringify(result.stats.queriesByKind))
+})
+
+test('an all-semantic plan with a full query budget still gets official queries (0.8.1)', async () => {
+  const seen = []
+  const config = baseConfig()
+  config.__engines = [queryRecordingEngine(seen)]
+  const result = await runResearch({
+    question: RAG_QUESTION,
+    depth: 'standard',
+    strategy: resolveStrategy({ questionKind: 'tech-selection', depth: 'standard', question: RAG_QUESTION }),
+    config,
+    llm: fakeLlm(planAwareResponder({
+      queries: [
+        { q: RAG_QUESTION, kind: 'semantic' },
+        { q: 'Java RAG 框架对比', kind: 'semantic' },
+      ],
+      directUrls: [],
+      reason: '全是中文语义',
+    })),
+    selection,
+    logger: () => {},
+  })
+  // No technical query exists to spend, so the last slot goes whatever its kind.
+  const counts = result.stats.queriesByKind
+  assert.ok(counts.official >= 1, JSON.stringify(counts))
+  assert.ok(counts.technical === 0, JSON.stringify(counts))
+  assert.equal(counts.semantic + counts.technical + counts.official, result.stats.queries)
+  assert.ok(seen.some((query) => query.startsWith('site:')), seen.join(' | '))
+  assert.match(result.brief, /官方定向 [1-9]\d*$/m)
+})
+
+test('officialBackstopQueries only uses declared bases/seeds (0.8.1)', () => {
+  const tech = resolveStrategy({ questionKind: 'tech-selection', depth: 'standard' })
+  const backstop = officialBackstopQueries(RAG_QUESTION, [], tech)
+  assert.ok(backstop.length >= 1 && backstop.length <= 2, JSON.stringify(backstop))
+  assert.ok(backstop.every((query) => /^site:[a-z0-9.-]+ \S+/.test(query)), JSON.stringify(backstop))
+  // A pack with no official channel has nothing to fall back to.
+  assert.deepEqual(officialBackstopQueries(RAG_QUESTION, [], resolveStrategy({ questionKind: 'concept', depth: 'standard' })), [])
 })

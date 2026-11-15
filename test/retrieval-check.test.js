@@ -56,8 +56,12 @@ test('tavilyKeyFromPatch reads quoted and bare keys only from the keys block (0.
 
 test('parseArgs accepts "--flag value" and "--flag=value" (0.8.0)', () => {
   assert.deepEqual(parseArgs(['--question', 'q1', '--focus', 'a, b', '--depth', 'quick', '--json']), {
-    question: 'q1', focus: ['a', 'b'], depth: 'quick', json: true,
+    question: 'q1', focus: ['a', 'b'], depth: 'quick', mode: '', json: true,
   })
   assert.equal(parseArgs(['--question=q2', '--depth=deep']).question, 'q2')
   assert.equal(parseArgs([]).depth, 'standard')
+  // 0.8.1 — mode picks the strategy pack (compare ⇒ tech-selection).
+  assert.equal(parseArgs(['--mode=compare']).mode, 'compare')
+  assert.equal(parseArgs(['--mode', 'track']).mode, 'track')
+  assert.equal(parseArgs([]).mode, '')
 })
