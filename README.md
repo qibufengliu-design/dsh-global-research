@@ -237,19 +237,24 @@ $env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
    `{ id, method: 'sitemap' | 'direct' | 'api', hosts: [...], maxPages }`，外加
    `renderFallback: { allowed, maxCalls }`。默认策略的 `sourcePlan` 是空通道数组 + `renderFallback: { allowed: false, maxCalls: 0 }`，
    因此默认路径的抓取集合与 0.5.x 完全一致（由既有测试保护）。
-2. **执行层**（`lib/pipeline.js` Step 2a）：只执行 `method: 'sitemap'` 的通道。其余 `direct` / `api` 通道目前**只是声明**，
-   留给后续版本接线（现有直取/垂直源逻辑不动）。
+2. **执行层**（`lib/pipeline.js` Step 2a）：0.6.3 起真正接线。`method: 'sitemap'` 的通道按 `bases` 数组依次爬站点根，
+   第一个能返回 sitemap 的根胜出（失败只记 `sourceFailures` 并继续下一个根）；没有 `bases` 时退回按问题匹配 `hosts` 的旧行为。
+   `method: 'direct'` 的通道按 `seeds`（真实 URL 数组）直取，最多 `channel.maxPages` 条，页面标记 `engine: 'channel:<id>'`。
+   `api` 通道仍是声明（留给后续版本）。
 3. **取回层**（`lib/fetch.js`）：每个取回结果统一带 `via`（`raw` / `web` / `jina` / `cellar`，sitemap 页面由管线覆盖为 `sitemap`），
    供 `gradeSource(url, via)` 决定是否降档。
 
-通道表（0.6.0 声明值）：
+通道表（0.6.3 接线后）：
 
-| 通道 | 适用 questionKind | method | hosts | maxPages |
+| 通道 | 适用 questionKind | method | 目标 | maxPages |
 | --- | --- | --- | --- | --- |
-| `official-docs` | tech-selection / learning | sitemap | docs.spring.io, spring.io, langchain4j.dev, nodejs.org, docs.python.org, developer.mozilla.org | 3 |
-| `pricing` | fresh-data | direct | api-docs.deepseek.com, help.aliyun.com, bigmodel.cn, www.volcengine.com | 2 |
-| `standards` | legal | direct | prisma-statement.org, cochrane.org, eric.ed.gov, owasp.org, eur-lex.europa.eu | 2 |
-| `papers` | contested | api | arxiv.org, openalex.org, pmc.ncbi.nlm.nih.gov | 2 |
+| `official-docs` | tech-selection / learning | sitemap | bases: docs.spring.io(+spring-boot/spring-ai)；react.dev / nodejs.org / docs.python.org | 3 |
+| `pricing` | fresh-data | direct | seeds: api-docs.deepseek.com、help.aliyun.com、bigmodel.cn、www.volcengine.com 的价目页 | 4 |
+| `standards` | legal | direct | hosts: prisma-statement.org, cochrane.org, eric.ed.gov, owasp.org, eur-lex.europa.eu | 2 |
+| `papers` | contested | api | hosts: arxiv.org, openalex.org, pmc.ncbi.nlm.nih.gov | 2 |
+
+`pricing` 的 `seeds` 只在价格类问题出现（`resolveStrategy` 对非价格问题会剥掉通道上的 `seeds`），否则发布/EOL 类问题会把
+整档页预算花在厂商价目页上。
 
 **sitemap 定向爬取**（`lib/sources.js`）：`crawlSitemap` 先取 `https://host/sitemap.xml`，失败再试 `sitemap_index.xml`；
 `sitemapindex` 只向下跟一层子 sitemap；解析 `<loc>` 后按问题关键词（latin token + CJK 短片段）对路径分词打分，取前 N 条。
@@ -269,10 +274,11 @@ $env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
 
 已知限制：
 
-- 只探站点根的 `sitemap.xml` / `sitemap_index.xml`；`docs.spring.io` 的根 sitemap 实际是 404，Spring 文档 sitemap 位于
-  `docs.spring.io/spring-boot/sitemap.xml`，当前通道（host 级）抓不到。
+- Spring 家族的 sitemap 实际是 `spring.io/sitemap-index.xml`（连字符形式），而 `crawlSitemap` 只试 `sitemap.xml` /
+  `sitemap_index.xml`，所以 `bases` 里的 `docs.spring.io` 根目前多半 404；通道会继续顺序尝试后面的根，但 Spring 文档站
+  仍可能一条都爬不到（0.6.3 起至少不再只试根域一处）。
 - `sitemapindex` 只跟一层，嵌套更深的站点会少抓。
-- `direct` / `api` 通道仅声明不执行；`renderFallback` 未接线。
+- `api` 通道仅声明不执行；`renderFallback` 未接线。
 - 不读 robots.txt，也不做 crawl-delay 之外的站点限速。
 
 ## 安装与迁移到另一台机器
@@ -350,9 +356,19 @@ API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会
 - **口径差异**：不同实体或不同单位（元 / 美元、上下文窗口 vs 输出上限）的数字，写清为什么不可直接比较，最多 2 条。
 - **来源自相矛盾**：同一 URL 的证据里同属性出现两个不同值；同一页面列出三个及以上取值视为表格/变更记录，不报矛盾。
 
-某一类为空时该小标题下写 `- 无`。三类都为空时整段不出现，保持与 0.6.0 一致的简报；只有口径差异时仍按旧行为写进「## 未解决」的一条注记。
+某一类为空时该小标题下写 `- 无`。三类都为空时整段不出现，保持与 0.6.0 一致的简报；只有「不同对象」的口径差异时仍按旧行为写进「## 未解决」的一条注记。0.6.3 起，**单位不可换算**（如 0.15 美元/百万 tokens 与 0.3 元/百万 tokens）本身就会让这一段出现，写在 `### 口径差异` 里，不再因为事实冲突为空而被丢掉。
+
+**价格题强制标币种**（0.6.3）：`synthPrompt` 规定价格表必须有一列「币种/单位」；不同币种不得直接比较大小、不得合并排序或得出「更便宜」，「## 未解决」里要写明「币种不同，未换算」；汇率没在证据里出现就不自行折算。断言层也同样处理：不可换算的价格对（元 vs 美元）标 `unitMismatch`，只进 `### 口径差异`，不进 `### 事实冲突`。
 
 ## 更新日志
+
+### 0.6.3（2026-11-15）
+
+- **官方域名表扩充**：`OFFICIAL_DOMAINS` 加入厂商官方文档/价目页（`docs.spring.io`、`spring.io`、`langchain4j.dev`、`help.aliyun.com`、`bigmodel.cn`、`volcengine.com`、`api-docs.deepseek.com`、`docs.aws.amazon.com`、`cloud.google.com`、`learn.microsoft.com`、`react.dev`、`vuejs.org`、`docs.djangoproject.com`、`docs.python.org`、`developer.mozilla.org`、`nodejs.org`、`platform.qianwenai.com` 等）；`isOfficialDomain` 仍是 host 后缀匹配（子域也算）。价格/文档题不再「官方采用恒为 0」。
+- **`pricing` 通道接线**：`sourcePlan` 的 `direct` 通道按 `seeds` 真实直取（DeepSeek / 阿里云百炼 / 智谱 / 火山方舟 四张价目页，全部先 curl 确认 200），页面标 `engine: 'channel:<id>'`，失败进 `sourceFailures` 不中断管线；`maxPages` 4。
+- **`official-docs` 通道按 `bases` 回退**：sitemap 通道依次尝试声明的站点根（如 `docs.spring.io` → `docs.spring.io/spring-boot` → `docs.spring.io/spring-ai`），第一个成功即停，失败逐个记录后继续。
+- **价格题强制标币种**：`synthPrompt` 要求价格表有「币种/单位」列；不同币种不得直接比较/排序，必须在「## 未解决」写「币种不同，未换算」。断言层的不可换算价格对只进 `### 口径差异`，并且 0.6.3 起单独出现也会生成该段（以前只有事实冲突或自相矛盾才会建段）。
+- 只对价格类问题启用 `pricing.seeds`（`resolveStrategy` 会为非价格问题剥掉通道上的 `seeds`），避免发布/EOL 类问题把页预算花在价目页上；测试总数 266。
 
 ### 0.6.2（2026-11-15）
 

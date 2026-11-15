@@ -510,6 +510,25 @@ test('口径差异 holds entity and unit differences with a reason instead of ca
   assert.doesNotMatch(brief, /^- 口径差异：/m)
 })
 
+test('an unconvertible unit pair reaches 口径差异 even when nothing else is disputed (0.6.3)', () => {
+  const mismatched = [{
+    attribute: '输入价格',
+    unitMismatch: true,
+    values: [
+      { value: '0.15', unit: '美元/百万 tokens', source: 'S1' },
+      { value: '0.3', unit: '元/百万 tokens', source: 'S2' },
+    ],
+  }]
+  const brief = appendConflictSection(
+    '## 结论\nx [S1]\n\n## 置信度\nmedium\n\n## 未解决\n- 无',
+    [], mismatched, [], [],
+  )
+  assert.match(brief, /^## 存在冲突$/m)
+  assert.match(brief, /^### 事实冲突\n- 无$/m)
+  assert.match(brief, /^### 口径差异\n- 输入价格：0\.15 美元\/百万 tokens（\[S1\]） \/ 0\.3 元\/百万 tokens（\[S2\]）（单位不同：美元\/百万 tokens \/ 元\/百万 tokens，不可直接比较）$/m)
+  assert.doesNotMatch(brief, /^- 口径差异：/m)
+})
+
 test('a page that states two different values for one property is a 来源自相矛盾', () => {
   const quote = '输出上限：384K tokens。输出上限：256K tokens。'
   const items = [{

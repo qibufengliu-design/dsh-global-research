@@ -784,22 +784,56 @@ test('a declared missing section gets a placeholder and costs one confidence not
   assert.ok(declared.confidence !== base.confidence, `expected a notch below ${base.confidence}`)
 })
 
-test('a pricing question pre-fetches the official price lists before search', async () => {
+test('a pricing question pre-fetches every declared vendor price list before search', async () => {
   const fetched = []
   const config = baseConfig()
   config.__fetchPage = fakeFetcher(fetched)
   const result = await runResearch({
     question: 'DeepSeek API 现在的输入价格是多少',
-    depth: 'quick',
+    depth: 'standard',
     config,
     llm: fakeLlm(defaultResponder),
     selection,
     logger: () => {},
   })
-  assert.equal(fetched[0], 'https://api-docs.deepseek.com/quick_start/pricing')
-  assert.equal(fetched[1], 'https://help.aliyun.com/zh/model-studio/models')
-  assert.equal(result.stats.directUrls, 2)
+  // 0.6.3: the pricing channel owns its seeds, so all four verified vendor price
+  // pages are read (the legacy path only took the first two).
+  assert.deepEqual(fetched.slice(0, 4), [
+    'https://api-docs.deepseek.com/quick_start/pricing',
+    'https://help.aliyun.com/zh/model-studio/models',
+    'https://bigmodel.cn/pricing',
+    'https://www.volcengine.com/docs/82379/1099320',
+  ])
+  assert.equal(result.stats.directUrls, 4)
+  assert.equal(result.stats.sourceFailures, 0)
   assert.equal(result.stats.officialFetchFailures, undefined)
+  // 0.6.3: wired seeds are really adopted as sources, not just fetched.
+  const domains = result.sources.map((source) => source.domain)
+  assert.ok(domains.includes('bigmodel.cn'), `missing vendor source: ${domains.join(', ')}`)
+  assert.ok(domains.includes('www.volcengine.com'), `missing vendor source: ${domains.join(', ')}`)
+})
+
+test('declared pricing seeds that fail are recorded and do not stop the run', async () => {
+  const config = baseConfig()
+  config.__fetchPage = async (url) => {
+    if (/api-docs\.deepseek\.com|help\.aliyun\.com|bigmodel\.cn|volcengine\.com/.test(url)) {
+      return { url, finalUrl: url, title: url, domain: new URL(url).hostname, ok: false, reason: 'blocked by the vendor' }
+    }
+    return fakeFetcher()(url)
+  }
+  const result = await runResearch({
+    question: '智谱和 DeepSeek 的 API 价格哪个便宜',
+    depth: 'standard',
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  // Every declared seed failed: all four are on record and the run still finishes.
+  assert.equal(result.partial, false)
+  assert.ok(result.stats.sourceFailures >= 4, `sourceFailures=${result.stats.sourceFailures}`)
+  assert.deepEqual(result.stats.officialFetchFailures, ['api-docs.deepseek.com', 'help.aliyun.com'])
+  assert.ok(result.brief.length > 0)
 })
 
 test('a non-pricing question fetches no price-list seeds', async () => {
@@ -956,6 +990,57 @@ test('a broken sitemap is recorded as a source failure and does not stop the run
   assert.ok(result.stats.sourceFailures >= 1)
   assert.ok(attempted.includes('https://docs.spring.io/sitemap.xml'))
   assert.ok(result.brief.length > 0)
+})
+
+test('a sitemap channel tries its declared bases in order until one answers', async () => {
+  const NODE_SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset>
+  <url><loc>https://nodejs.org/en/learn/typescript/introduction</loc></url>
+  <url><loc>https://nodejs.org/en/about/lts-schedule</loc></url>
+  <url><loc>https://nodejs.org/en/blog/node-22-lts</loc></url>
+</urlset>`
+  const sitemapRequests = []
+  const fetched = []
+  const config = baseConfig({
+    __fetchRaw: async (url) => {
+      if (/sitemap/i.test(url)) sitemapRequests.push(url)
+      if (url.startsWith('https://react.dev')) return { status: 404, body: '' }
+      if (url === 'https://nodejs.org/sitemap.xml') return { status: 200, body: NODE_SITEMAP }
+      return { status: 404, body: '' }
+    },
+  })
+  config.__fetchPage = fakeFetcher(fetched)
+  const base = resolveStrategy({ questionKind: 'tech-selection', depth: 'quick', question: 'Node 22 与 TypeScript 的 LTS 迁移' })
+  const strategy = {
+    ...base,
+    sourcePlan: {
+      ...base.sourcePlan,
+      channels: base.sourcePlan.channels.map((channel) => ({
+        ...channel,
+        bases: ['https://react.dev', 'https://nodejs.org'],
+        maxPages: 3,
+      })),
+    },
+  }
+  const result = await runResearch({
+    question: 'Node 22 与 TypeScript 的 LTS 迁移',
+    depth: 'quick',
+    strategy,
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  // react.dev is tried first (both conventional paths), then the next declared
+  // root answers; the channel does not give up after the first 404.
+  assert.deepEqual(sitemapRequests, [
+    'https://react.dev/sitemap.xml',
+    'https://react.dev/sitemap_index.xml',
+    'https://nodejs.org/sitemap.xml',
+  ])
+  assert.equal(result.stats.sitemapPages, 3)
+  assert.ok(fetched.some((url) => url.startsWith('https://nodejs.org/en/')), fetched.join(' | '))
+  assert.equal(result.partial, false)
 })
 
 test('user-provided text is the first evidence source, not a fetched page', async () => {

@@ -44,3 +44,12 @@ test('synthesis prompt requires a citation on every numeric table value', () => 
   // The existing table limits must survive the new rule.
   assert.ok(prompt.includes('表格最多 3 行、每格不超过 20 字'), 'the table size limits changed')
 })
+
+test('synthesis prompt forces a currency column and forbids cross-currency comparison', () => {
+  const prompt = synthPrompt(synthArgs())
+  assert.ok(prompt.includes('必须有一列「币种/单位」'), 'the currency-column rule is missing')
+  assert.ok(prompt.includes('不得直接比较大小'), 'the no-direct-comparison rule is missing')
+  assert.ok(prompt.includes('币种不同，未换算'), 'the 未解决 disclosure string is missing')
+  // The rule must not weaken the numeric-cell citation rule it sits next to.
+  assert.ok(prompt.includes('必须紧跟 [S#]'), 'the [S#] requirement is missing')
+})

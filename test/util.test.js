@@ -2,9 +2,26 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   Budget, BudgetExceeded, configureDomainTrust, decodeEntities, dedupeHits, domainTrust,
-  evidenceAgeDays, htmlToText, isBlockedDomain, jaccard, jsonSafe, normalizeUrl, parseLooseJson,
-  rankHits, truncate, canonicalKey, extractUrls,
+  evidenceAgeDays, htmlToText, isBlockedDomain, isOfficialDomain, jaccard, jsonSafe, normalizeUrl,
+  parseLooseJson, rankHits, truncate, canonicalKey, extractUrls,
 } from '../lib/util.js'
+
+test('vendor documentation and price pages count as official sources (0.6.3)', () => {
+  const official = [
+    'https://docs.spring.io/spring-boot/3.4/reference/',
+    'https://spring.io/projects/spring-boot',
+    'https://help.aliyun.com/zh/model-studio/models',
+    'https://bigmodel.cn/pricing',
+    'https://www.volcengine.com/docs/82379/1099320',
+    'https://api-docs.deepseek.com/quick_start/pricing',
+    'https://react.dev/learn',
+    'https://nodejs.org/en/about/previous-releases',
+  ]
+  for (const url of official) assert.equal(isOfficialDomain(url), true, url)
+  // A repo/forum page about a vendor is not the vendor's own docs.
+  assert.equal(isOfficialDomain('https://github.com/nodejs/node'), false)
+  assert.equal(isOfficialDomain('https://example.com/pricing'), false)
+})
 
 test('evidenceAgeDays counts days for a parseable date, null otherwise', () => {
   const now = Date.parse('2026-01-31T00:00:00Z')
