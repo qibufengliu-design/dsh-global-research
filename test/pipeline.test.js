@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { runResearch, groupEvidence, looksLikeFollowUp, extractEvidence } from '../lib/pipeline.js'
+import { runResearch, groupEvidence, looksLikeFollowUp, extractEvidence, pickDocBases } from '../lib/pipeline.js'
 import { downgradeConfidence } from '../lib/brief.js'
 import { resolveStrategy } from '../lib/strategy.js'
 import { rankHits } from '../lib/util.js'
@@ -1227,4 +1227,29 @@ test('when every readable page is retired evidence survives, flagged stale (0.6.
   assert.ok(result.gaps.some((gap) => gap.includes('唯一可读来源已过期')), result.gaps.join(' | '))
   assert.equal(result.confidence, 'low', 'stale cards cannot lift the verdict')
   assert.match(result.brief, /（已过期，仅作参考）/)
+})
+
+const OFFICIAL_DOC_BASES = (question) => resolveStrategy({ questionKind: 'tech-selection', depth: 'quick', question })
+  .sourcePlan.channels.find((channel) => channel.id === 'official-docs').bases
+
+test('pickDocBases routes a Spring AI question to the Spring AI manual (0.6.8)', () => {
+  const question = 'Spring AI 和 LangChain4j 做 RAG 选型时哪个更好'
+  const bases = pickDocBases(question, '', OFFICIAL_DOC_BASES(question))
+  assert.deepEqual(bases, ['https://docs.spring.io/spring-ai/reference', 'https://docs.langchain4j.dev'])
+})
+
+test('pickDocBases puts the Spring Boot manual first for a Boot question (0.6.8)', () => {
+  const question = 'Spring Boot 3 JPA 分页怎么写'
+  const bases = pickDocBases(question, '', OFFICIAL_DOC_BASES(question))
+  assert.equal(bases[0], 'https://docs.spring.io/spring-boot')
+  assert.equal(bases.length, 2)
+  // The generic root is the honest second try; the unrelated AI manual is not.
+  assert.equal(bases[1], 'https://docs.spring.io')
+})
+
+test('pickDocBases falls back to the generic root when no tag matches (0.6.8)', () => {
+  const question = 'Rust tokio 异步运行时怎么选'
+  const bases = pickDocBases(question, '', OFFICIAL_DOC_BASES(question))
+  assert.equal(bases[0], 'https://docs.spring.io')
+  assert.ok(!bases.includes('https://docs.spring.io/spring-boot'))
 })

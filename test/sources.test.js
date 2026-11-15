@@ -334,3 +334,94 @@ test('a child sitemap is resolved against the index URL, not the site root (0.6.
   assert.equal(result.sitemapUrl, 'https://example.com/docs/sitemap-0.xml')
   assert.deepEqual(result.urls, ['https://example.com/docs/reference/spring-boot-config.html'])
 })
+const LANGCHAIN_URLSET = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://langchain4j.github.io/tutorials/chat-memory</loc></url>
+  <url><loc>https://langchain4j.github.io/tutorials/rag</loc></url>
+</urlset>`
+
+const OTHER_HOST_URLSET = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://downloads.example.com/tutorials/chat-memory</loc></url>
+</urlset>`
+
+test('a stale sitemap entry is re-pointed at the documentation host (0.6.8)', async () => {
+  // docs.langchain4j.dev/sitemap.xml still lists langchain4j.github.io, which
+  // 404s today; the same path on the docs host answers 200.
+  const seen = []
+  const fetchRaw = async (url) => {
+    seen.push(url)
+    if (url === 'https://docs.langchain4j.dev/sitemap.xml') return { status: 200, body: LANGCHAIN_URLSET }
+    if (url === 'https://docs.langchain4j.dev/tutorials/chat-memory') return { status: 200, body: '<html>ok</html>' }
+    return { status: 404, body: '' }
+  }
+  const result = await crawlSitemap({
+    baseUrl: 'https://docs.langchain4j.dev/',
+    keywords: ['chat', 'memory'],
+    limit: 1,
+    fetchRaw,
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(seen, ['https://docs.langchain4j.dev/sitemap.xml', 'https://docs.langchain4j.dev/tutorials/chat-memory'])
+  assert.deepEqual(result.urls, ['https://docs.langchain4j.dev/tutorials/chat-memory'])
+})
+
+test('a failed host probe keeps the original <loc> (0.6.8)', async () => {
+  const seen = []
+  const fetchRaw = async (url) => {
+    seen.push(url)
+    if (url === 'https://docs.langchain4j.dev/sitemap.xml') return { status: 200, body: LANGCHAIN_URLSET }
+    return { status: 404, body: '' }
+  }
+  const result = await crawlSitemap({
+    baseUrl: 'https://docs.langchain4j.dev/',
+    keywords: ['chat', 'memory'],
+    limit: 1,
+    fetchRaw,
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.urls, ['https://langchain4j.github.io/tutorials/chat-memory'])
+  assert.equal(seen.length, 2)
+})
+
+test('docHostRewrite: 0 disables the cross-host probe (0.6.8)', async () => {
+  const seen = []
+  const fetchRaw = async (url) => {
+    seen.push(url)
+    if (url === 'https://docs.langchain4j.dev/sitemap.xml') return { status: 200, body: LANGCHAIN_URLSET }
+    return { status: 200, body: '<html>ok</html>' }
+  }
+  const result = await crawlSitemap({
+    baseUrl: 'https://docs.langchain4j.dev/',
+    keywords: ['chat', 'memory'],
+    limit: 1,
+    docHostRewrite: 0,
+    fetchRaw,
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(seen, ['https://docs.langchain4j.dev/sitemap.xml'])
+  assert.deepEqual(result.urls, ['https://langchain4j.github.io/tutorials/chat-memory'])
+})
+
+test('non-documentation hosts are never rewritten (0.6.8)', async () => {
+  const seen = []
+  const fetchRaw = async (url) => {
+    seen.push(url)
+    if (url === 'https://example.com/docs/sitemap.xml') return { status: 200, body: OTHER_HOST_URLSET }
+    return { status: 200, body: '<html>ok</html>' }
+  }
+  const result = await crawlSitemap({
+    baseUrl: 'https://example.com/docs/',
+    keywords: ['chat', 'memory'],
+    limit: 1,
+    fetchRaw,
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(seen, [
+    'https://example.com/sitemap.xml',
+    'https://example.com/sitemap_index.xml',
+    'https://example.com/sitemap-index.xml',
+    'https://example.com/docs/sitemap.xml',
+  ])
+  assert.deepEqual(result.urls, ['https://downloads.example.com/tutorials/chat-memory'])
+})

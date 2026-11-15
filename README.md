@@ -79,6 +79,7 @@ plugin_manager set_plugin target: include:global-research enabled: true
 | `keys.<name>` | `{}` | 付费引擎 key 的内联写法（可选，见下） |
 | `pageFetcher` | `raw` | 正文抓取路径：`raw`=自带 HTTP+抽取（最忠实，默认）；`web`=只用宿主 `web.fetch`；`auto`=先 web，正文太薄再用 raw 重试 |
 | `useJinaFallback` | `false` | JS 重站点用 `r.jina.ai` 兜底取正文 |
+| `docHostRewrite` | `3` | sitemap `<loc>` 跨主机改写（0.6.8）：`docs.*` 文档站点的 sitemap 若仍指向旧主机，最多探测前 N 条并换成本主机；设 `0` 关闭 |
 | `timeoutMs` | `120000` | 工具级超时下限；实际取 `max(配置, deep 的 300s) + 20s`，避免 deep 被工具超时先杀掉 |
 | `verboseLog` | `false` | 打印引擎失败、重试等日志 |
 | `debugStats` | `false` | 在简报末尾额外附「调试统计」一行（引擎、垂直源、官方直取、回补、域名），排查召回问题时用；查询数/页数/证据数/耗时已固定显示在「本次检索」行，不在这里重复 |
@@ -188,7 +189,7 @@ config:
 Get-ChildItem test\*.test.js | ForEach-Object { node $_.FullName }
 ```
 
-覆盖：URL 规范化与内容去重、预算、JSON 修复、引用校验、DDG 解析、引擎失败隔离与自动禁用、付费引擎解析与 key 来源、垂直源选择与解析（GitHub/arXiv/StackExchange/npm/HN/PyPI，含垃圾 payload、纯中文 query 跳过、SE 标签映射与 intitle 回退、单源失败隔离）、管线十步（假引擎/假抓取/假模型，含检索计划优先与 ghost citation 清理）、阶段耗时（六个阶段的整数毫秒、快跑不进简报）、官方链接挖掘与预算边界、EUR-Lex Cellar 映射与回退、EUR-Lex 摘要页/搜索页降权与 ELI 原文优先、EU 站点语言前缀归一、法规问题回补预留页位、无一手源时回补强制官方域名 query、垂直源正文兜底与选择位保护、配置校验（类型强转/夹取/未知键 warning）、域名信任名单与黑名单过滤、缓存（key 归一、TTL、LRU、命中不调模型、focus 不同绕过、可关闭）、client 卡片解析（置信度徽章/来源数/耗时/失败与运行中状态/无分段兜底/阶段 chip 与缺段不渲染）、阶段摘要格式（>0.5s、最多 4 段、按阶段顺序输出）、`apply` 注册、skill 注册与端到端 execute、sourcePlan 通道声明、sitemap 解析与关键词打分、sitemap 预算/失败隔离、用户提供资料作为证据。共 283 例。
+覆盖：URL 规范化与内容去重、预算、JSON 修复、引用校验、DDG 解析、引擎失败隔离与自动禁用、付费引擎解析与 key 来源、垂直源选择与解析（GitHub/arXiv/StackExchange/npm/HN/PyPI，含垃圾 payload、纯中文 query 跳过、SE 标签映射与 intitle 回退、单源失败隔离）、管线十步（假引擎/假抓取/假模型，含检索计划优先与 ghost citation 清理）、阶段耗时（六个阶段的整数毫秒、快跑不进简报）、官方链接挖掘与预算边界、EUR-Lex Cellar 映射与回退、EUR-Lex 摘要页/搜索页降权与 ELI 原文优先、EU 站点语言前缀归一、法规问题回补预留页位、无一手源时回补强制官方域名 query、垂直源正文兜底与选择位保护、配置校验（类型强转/夹取/未知键 warning）、域名信任名单与黑名单过滤、缓存（key 归一、TTL、LRU、命中不调模型、focus 不同绕过、可关闭）、client 卡片解析（置信度徽章/来源数/耗时/失败与运行中状态/无分段兜底/阶段 chip 与缺段不渲染）、阶段摘要格式（>0.5s、最多 4 段、按阶段顺序输出）、`apply` 注册、skill 注册与端到端 execute、sourcePlan 通道声明、sitemap 解析与关键词打分、sitemap 预算/失败隔离、sitemap base 相对发现与内容校验、跨主机 `<loc>` 改写与 `docHostRewrite` 开关、按题选择文档 base（`pickDocBases`）、用户提供资料作为证据。共 290 例。
 
 ## 真实网络 e2e
 
@@ -239,6 +240,9 @@ $env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
    因此默认路径的抓取集合与 0.5.x 完全一致（由既有测试保护）。
 2. **执行层**（`lib/pipeline.js` Step 2a）：0.6.3 起真正接线。`method: 'sitemap'` 的通道按 `bases` 数组依次爬站点根，
    第一个能返回 sitemap 的根胜出（失败只记 `sourceFailures` 并继续下一个根）；没有 `bases` 时退回按问题匹配 `hosts` 的旧行为。
+   0.6.8 起 `bases` 可写成 `{ base, tags }`，`pickDocBases(question, focus, bases)` 先按 tags 与问题 token 的重合度排序
+   （多词 tag 要求全部 token 命中，如 `spring-ai` → `spring` + `ai`），无 tags 的通用 base 排最后且只在无命中时优先，
+   最多试 2 个 base（`max: 2`）：Spring AI 的 RAG 问题先进 `spring-ai/reference/`，Spring Boot 的 JPA 问题先进 `spring-boot`。
    `method: 'direct'` 的通道按 `seeds`（真实 URL 数组）直取，最多 `channel.maxPages` 条，页面标记 `engine: 'channel:<id>'`。
    `api` 通道仍是声明（留给后续版本）。
 3. **取回层**（`lib/fetch.js`）：每个取回结果统一带 `via`（`raw` / `web` / `jina` / `cellar`，sitemap 页面由管线覆盖为 `sitemap`），
@@ -248,7 +252,7 @@ $env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
 
 | 通道 | 适用 questionKind | method | 目标 | maxPages |
 | --- | --- | --- | --- | --- |
-| `official-docs` | tech-selection / learning | sitemap | bases: docs.spring.io(+spring-boot/spring-ai)；react.dev / nodejs.org / docs.python.org | 3 |
+| `official-docs` | tech-selection / learning | sitemap | bases 带 tags，按问题排序（0.6.8）：spring-ai/reference（spring-ai/ai/rag/vector）、spring-boot（spring-boot/boot/web/jpa）、docs.langchain4j.dev（langchain4j/llm/rag/agent）、通用 docs.spring.io；learning 用 react.dev / nodejs.org / docs.python.org | 3 |
 | `pricing` | fresh-data | direct | seeds: api-docs.deepseek.com、help.aliyun.com、bigmodel.cn、www.volcengine.com 的价目页 | 4 |
 | `standards` | legal | direct | hosts: prisma-statement.org, cochrane.org, eric.ed.gov, owasp.org, eur-lex.europa.eu | 2 |
 | `papers` | contested | api | hosts: arxiv.org, openalex.org, pmc.ncbi.nlm.nih.gov | 2 |
@@ -273,12 +277,21 @@ $env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
 实测 `spring.io` 的 7475 条 `<loc>` 里没有 `/reference/`、`/docs/` 路径，0.6.4 会挑中三条 2015–2018 的 `/blog/` 旧文，
 0.6.5 改为挑出 `guides/gs/spring-boot`、`guides/gs/spring-boot-docker`、`guides/gs/spring-boot-for-azure`。
 
+**跨主机 `<loc>` 改写**（0.6.8）：站点换域名后常常继续发旧 sitemap。`docs.langchain4j.dev/sitemap.xml` 里的 `<loc>`
+仍指向 `langchain4j.github.io/tutorials/chat-memory`（实测 404），而同一路径在 `docs.langchain4j.dev` 上是 200。
+`crawlSitemap` 返回前会检查 `<loc>` 主机与 base 主机是否不同：只有 base 是 `docs.*` 文档主机、且两边都是
+`.dev`/`.io` 这类文档类域名时才改写，最多探测前 `docHostRewrite`（默认 3）条，用 5s 超时取 `base origin + 原 path`，
+2xx/3xx 才替换，失败保留原 `<loc>`；CDN、多域站点不受影响，`docHostRewrite: 0` 可整体关闭。
+探测复用同一 `fetchRaw`，仍走 ≥400ms 间隔与 12s 预算。
+
 **旧源降权**（0.6.5）：`looksStale(text)` 识别「已过期 / 不再维护 / 已归档 / deprecated / archived / end of life」等自我声明，
 `rankHits` 对命中的条目 −3，若同时 `publishedAt` 早于 3 年再 −1；`groupEvidence` 之前不做任何过滤，
 因此唯一来源仍会进简报，只有候选数超过页预算时才会被挤出 `selected`。竖向来源的保留槽位也不会再把 stale 条目硬塞回来。
 
 **预算与失败**：sitemap 抓回的页面走同一条 `__fetchPage`，成功一页扣一格页预算（`budget.take('pages')`），
 预算不够就少抓；失败只记 `stats.sourceFailures`（数量）和内部 `{channel, host, reason}`，不中断管线。
+`official-docs` 通道最多试 2 个 base（0.6.8），每个 base 最多 6 条候选 + 2 次 index 展开，再加上 ≤3 次主机改写探测，
+最坏约 2×(6+2)+3 = 19 次轻量请求，仍远低于页预算开销；实际多数站点第 1 个候选就命中。
 非 docs 类问题不会触发 sitemap；默认策略没有通道，所以也不会慢。
 
 **渲染兜底门槛**：`renderFallback.allowed` 只在文档站通道（`official-docs`）为 `true`、`maxCalls: 1`，其余为 `false / 0`。
@@ -296,9 +309,11 @@ $env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
   但 **文档目录下有**：0.6.7 实测 `https://docs.spring.io/spring-ai/reference/sitemap.xml` 200 / 132191 字节，
   `https://docs.spring.io/spring-boot/sitemap.xml` 200 / 13687546 字节。`crawlSitemap({ baseUrl: 'https://docs.spring.io/spring-ai/reference/' })`
   因此能返回 `ok: true` 与该目录下的 3 条 URL。
-- 通道的 `bases` 仍是站点根（`docs.spring.io` / `docs.spring.io/spring-boot` …），而 `bases` 是「第一个成功即停」且与问题类型无关：
-  把 `spring-ai/reference/` 排进去会让 Spring Boot 类问题也拿到 Spring AI 文档。所以 0.6.7 只交付「base 相对发现」这个能力，
-  通道层面的按题选择题根作为后续项，没有在本版硬接。
+- 通道的 `bases` 现在带 tags 并按题排序（0.6.8），Spring AI / Spring Boot / LangChain4j 不会再互相串；
+  但同一项目内部仍是「第一个成功即停」——`docs.spring.io/spring-boot/sitemap.xml` 有 13.7MB、候选里 `spring-boot`
+  排在 `spring-ai` 之后只是 tag 排序的结果，问题里两个词同时出现时仍以 tag 得分高者为准。
+- `docs.langchain4j.dev` 的 sitemap 实测仍指向 `langchain4j.github.io`（换域名后的旧数据）；0.6.8 会在返回前把前几条
+  改写到 docs 主机并验证 2xx/3xx，没探测到的条目仍可能指向旧主机。
 - `sitemapindex` 只跟一层，嵌套更深的站点会少抓（候选耗尽时按失败返回）。
 - `api` 通道仅声明不执行；`renderFallback` 未接线。
 - 不读 robots.txt，也不做 crawl-delay 之外的站点限速。
@@ -391,6 +406,20 @@ API key 只放在 profile 的 patch 文件里，不进仓库；没有 key 时会
 - 万一过期页仍进了「## 参考」（全页过期或已被采用），该行行尾标 `（已过期，仅作参考）`。
 
 ## 更新日志
+
+### 0.6.8（2026-11-15）
+
+- **跨主机 `<loc>` 改写**：`crawlSitemap` 返回前最多把前 `DOC_HOST_REWRITE_MAX`（默认 3）条跨主机条目换成 base 主机同路径版本。
+  只在 base 是 `docs.*` 文档主机、且两侧都是 `.dev`/`.io` 文档类域名时启用；逐条 5s 探测，2xx/3xx 才替换，失败保留原 `<loc>`。
+  `config.docHostRewrite`（0–3，默认 3，`0` 关闭）暴露给调用方，README 配置表已列出。
+- **按题选择文档 base**：`official-docs` 通道的 `bases` 改为 `{ base, tags }`，`pickDocBases(question, focus, bases, { max: 2 })`
+  按 tags 与问题 token 的重合度排序（多词 tag 要求全部 token 命中），通用 base 排最后，最多试 2 个；
+  Spring AI 的 RAG 问题先到 `spring-ai/reference/`，Spring Boot 的 JPA 问题先到 `spring-boot`，不再互相串。
+- **真实网络验证**：`crawlSitemap({ baseUrl: 'https://docs.langchain4j.dev/' })` → `ok: true`，返回的 3 条 URL 已改写为
+  `docs.langchain4j.dev/tutorials/...`，对改写后的地址取回 200（原始 `langchain4j.github.io/tutorials/chat-memory` 实测 404）；
+  `docs.spring.io` 上 Spring AI 问题经 `pickDocBases` 选中 `https://docs.spring.io/spring-ai/reference/` 作为第一个 base。
+- 测试总数 290（新增 sources 4：改写成功、探测失败保留原值、`docHostRewrite: 0` 不探测、非文档主机不改写；
+  pipeline 3：Spring AI 题序、Spring Boot 题序、无 tag 命中回退通用根）。
 
 ### 0.6.7（2026-11-15）
 
