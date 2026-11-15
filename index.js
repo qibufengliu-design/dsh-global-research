@@ -328,9 +328,19 @@ export function apply(ctx, rawConfig = {}) {
       if (cache && key && !result.partial) cache.set(key, JSON.parse(JSON.stringify(result)))
       if (config.debugStats) {
         const stats = result.stats ?? {}
+        // 0.9.3 — a skipped directed retry says it was skipped: `解决 0` alone
+        // would look like the retry ran and found nothing.
+        const targeted = stats.targetedRefill ?? {}
+        const targetedLabel = targeted.skipped === 'budget'
+          ? ' · 定向回补跳过（预算不足）'
+          : targeted.skipped === 'time'
+            ? ' · 定向回补跳过（时间不足）'
+            : (targeted.optionsTried ?? 0)
+              ? ` · 定向回补 ${targeted.optionsTried} 项（解决 ${targeted.optionsResolved ?? 0}）`
+              : ''
         // Query/page/evidence/second counts already live in the brief's fixed
         // 「本次检索」 line; keep this row for diagnostics that line omits.
-        result.brief += `\n\n---\n调试统计：引擎 ${(stats.engines ?? []).join(',') || '无'} · 垂直源 ${(stats.verticals ?? []).join(',') || '无'}（${stats.verticalHits ?? 0} 条${Object.keys(stats.verticalsByEngine ?? {}).length ? '：' + Object.entries(stats.verticalsByEngine).map(([name, count]) => `${name} ${count}`).join('，') : ''}）· 官方直取 ${stats.directUrls ?? 0} · sitemap ${stats.sitemapPages ?? 0}${(stats.sourceFailures ?? 0) ? `（失败 ${stats.sourceFailures}）` : ''}${(stats.refillQueries ?? []).length ? ` · 回补 ${stats.refillQueries.length} 条（${stats.refillQueries.map((query) => query.slice(0, 40)).join(' | ')}）` : ''}${(stats.targetedRefill?.optionsTried ?? 0) ? ` · 定向回补 ${stats.targetedRefill.optionsTried} 项（解决 ${stats.targetedRefill?.optionsResolved ?? 0}）` : ''} · 域名 ${(stats.hosts ?? []).slice(0, 8).join(',') || '无'}`
+        result.brief += `\n\n---\n调试统计：引擎 ${(stats.engines ?? []).join(',') || '无'} · 垂直源 ${(stats.verticals ?? []).join(',') || '无'}（${stats.verticalHits ?? 0} 条${Object.keys(stats.verticalsByEngine ?? {}).length ? '：' + Object.entries(stats.verticalsByEngine).map(([name, count]) => `${name} ${count}`).join('，') : ''}）· 官方直取 ${stats.directUrls ?? 0} · sitemap ${stats.sitemapPages ?? 0}${(stats.sourceFailures ?? 0) ? `（失败 ${stats.sourceFailures}）` : ''}${(stats.refillQueries ?? []).length ? ` · 回补 ${stats.refillQueries.length} 条（${stats.refillQueries.map((query) => query.slice(0, 40)).join(' | ')}）` : ''}${targetedLabel} · 域名 ${(stats.hosts ?? []).slice(0, 8).join(',') || '无'}`
       }
       const saveTo = typeof args?.saveTo === 'string' ? args.saveTo.trim() : ''
       if (saveTo) {

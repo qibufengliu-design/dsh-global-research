@@ -14,16 +14,23 @@
 - **研究材料粘贴区（`text` 的 UI 入口）**：此前 `text` 只能由模型在调用时传参，人在界面上没有入口。设置页新增「研究材料」`textarea`（新配置键 `material`，≤20000 字，超限截断并提示），保存后每次 `research` 调用自动把原文当最高优先级证据；简报末尾追加「材料来源：设置页的「研究材料」（N 字）。它只在本次调用里当证据用；清空设置后不再自动带上」；显式 `text` 仍优先，调用日志会标明来源。
 - 输入框右侧多一枚「材料 N 字」胶囊（仅存在材料时出现），点击复制设置路径；设置页 summary 显示「默认深度：X · 材料 N 字」。
 - `lib/config.js` 新增 `asMaterial(value, fallback, warnings)`（非字符串回落默认、trim、超限截断 + warning）与 `MATERIAL_MAX_CHARS = 20000`；`lib/schema.js` 增 `material` 字段（设置页可直接改）。
+- `stats.targetedRefill` 增 `skipped`（`'budget'` / `'time'` / `null`）与 `triedOptions` / `resolvedOptions`：回补即使一条 query 都没发，也会留下「为什么没跑」的记录（`optionsTried` 计进入回补的零证据选项数，预算为 0 时也计）。
 
 ### Changed
 
 - 修正文档里「深度胶囊是只读提示」的过期说法（0.9.1 起胶囊已可直接切换档位、启停插件），`README.md` 与 `docs/configuration.md` 同步更新。
+- **跳过不再静默**：「未解决」里的零证据 gap 按 `skipped` 分三支——跑了但没补上仍是「（已定向检索 1 次仍未获证）」，因预算跳过写「（页预算耗尽，未做定向检索）」，因墙钟跳过写「（剩余时间不足，未做定向检索）」；`> 检索流程：` 行尾与 `debugStats` 行同步写「· 定向回补跳过（预算不足）」/「（时间不足）」，不再把「没跑」说成「跑了」。
+
+### Fixed
+
+- **定向回补被预算静默跳过（0.9.2 回归）**：B 题「国内大模型 API 价格对比…」里 12 页预算在常规选页就被吃满，`targetedOptionRefill` 撞上 `no page budget left` 直接 return，于是流程行没有「定向回补」段、「未解决」也没有「已定向检索」，看起来像没做这件事。`lib/pipeline.js` 的 Step 4 选页现在对 `isCompareRun()` 且 `compareOptions()` 解析出 ≥2 个选项的题预留最多 2 页给定向回补（`targetedRefillReserve`，与既有官方文档 `refillReserve` **叠加**而不是替换，且至少留 1 个常规搜索位），`wantedSearch` 与 Step 5b 官方链接余量都扣掉它；Step 8 的 `gapRefill()` 新增 `reservePages` 参数，gap 轮也不能吃掉这份预留。实测 standard 档价格对比题从「回补被跳过」变成 `pagesFetched 11`（3 张种子页 + 7 张常规页 + 1 张豆包定向页）。
 
 ### Tests
 
 - `test/config.test.js` +1：`material` 默认空串、trim、纯空白视为未设置、20050 字截成 20000 并 warning、非字符串回落默认。
 - `test/card.test.js` +4：summary 显示材料字数；粘贴→「草稿 N 字」→「保存材料」写入 `[{ op: 'set', path: ['material'], value }]` 且带 revision；「清空」写入空串；composer 在 settings 含材料时渲染「材料 N 字」胶囊（`createHooks()` 新增 `runEffects()` 以执行记录下来的 effect）。
 - `test/wiring.test.js`：`fakeHarness()` 支持覆盖 config、记录每次给模型的 prompt；+2 用例——未传 `text` 时设置里的材料进入 prompt 且简报带来源提示，显式 `text` 覆盖材料时 prompt 里只有传参内容。测试总数 337 → 344。
+- `test/pipeline.test.js` +1、改写 1：新增「compare runs keep page slots for the directed retry」——常规选页本来会把 12 页预算吃满（`budgetFillingEngine()` 每条计划 query 回 12 条不同域、不同标题的命中），预留生效后定向回补仍抓到豆包价目页，断言 `targetedRefill.skipped === null`、`pagesFetched === 11`、豆包不再进 gap 且页面进 `sources`；原「页预算/墙钟双守卫」用例改为断言跳过标注（budget → gap 含「页预算耗尽，未做定向检索」、流程行含「定向回补跳过（预算不足）」、`optionsTried >= 1`；time → 「剩余时间不足，未做定向检索」/「（时间不足）」），另两例的 `deepEqual` 补 `skipped: null` 并断言简报不含「定向回补跳过」。测试总数 344 → 345。
 
 ## [0.9.2] - 2026-11-15
 

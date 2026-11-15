@@ -1736,8 +1736,9 @@ test('a zero-evidence option is retried once and adopted when the retry lands (0
   assert.ok(fetched.includes(DOUBAO_URL), JSON.stringify(fetched))
   assert.ok(!result.gaps.some((gap) => gap.includes('选项「豆包」')), JSON.stringify(result.gaps))
   assert.ok(result.sources.some((source) => source.url === DOUBAO_URL), JSON.stringify(result.sources))
-  assert.deepEqual(result.stats.targetedRefill, { optionsTried: 1, pagesFetched: 1, optionsResolved: 1 })
+  assert.deepEqual(result.stats.targetedRefill, { optionsTried: 1, pagesFetched: 1, optionsResolved: 1, skipped: null })
   assert.match(result.brief, /定向回补 1 项（解决 1）/)
+  assert.ok(!result.brief.includes('定向回补跳过'), result.brief)
 })
 
 test('a directed retry that finds nothing keeps the gap and says it was tried (0.9.2)', async () => {
@@ -1760,11 +1761,79 @@ test('a directed retry that finds nothing keeps the gap and says it was tried (0
   assert.ok(gap, JSON.stringify(result.gaps))
   assert.match(gap, /已定向检索 1 次仍未获证/)
   assert.match(result.brief, /选项「豆包」在本轮证据中没有可用来源/)
-  assert.deepEqual(result.stats.targetedRefill, { optionsTried: 1, pagesFetched: 0, optionsResolved: 0 })
+  assert.deepEqual(result.stats.targetedRefill, { optionsTried: 1, pagesFetched: 0, optionsResolved: 0, skipped: null })
   assert.match(result.brief, /定向回补 1 项（解决 0）/)
+  assert.ok(!result.brief.includes('定向回补跳过'), result.brief)
 })
 
-test('targeted refill stays off without page budget or wall-clock room (0.9.2)', async () => {
+// 0.9.3 — the reserve is what makes this test possible: with a wide candidate
+// pool ordinary selection would otherwise take all 12 pages and the directed
+// retry would find zero budget left (the 0.9.2 regression, exactly).
+// Distinct titles on purpose: dedupeHits collapses near-duplicate titles, and a
+// dozen hits sharing three headlines would leave three candidates for a
+// nine-slot selection — no starvation to demonstrate.
+const MARKET_WORDS = [
+  'Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot',
+  'Golf', 'Hotel', 'India', 'Juliet', 'Kilo', 'Lima',
+]
+
+function budgetFillingEngine(queries, directedUrls = [DOUBAO_URL]) {
+  return {
+    name: 'fake',
+    available: () => true,
+    search: async (query) => {
+      const text = String(query)
+      queries.push(text)
+      if (text.includes('价格 OR pricing')) {
+        return directedUrls.map((url, index) => ({
+          url, title: '豆包大模型 API 价格', snippet: 'snippet', engine: 'fake', rank: index + 1,
+        }))
+      }
+      // 12 distinct URLs (and 12 distinct titles) per plan query, none of them the
+      // vendor page: the pool is far larger than the page budget, which is what
+      // used to starve the retry.
+      return MARKET_WORDS.map((word, index) => ({
+        url: `https://market-news-${index}.example.com/pricing`,
+        title: `${word} 大模型 API 计费页`,
+        snippet: 'snippet',
+        engine: 'fake',
+        rank: index + 1,
+      }))
+    },
+  }
+}
+
+test('compare runs keep page slots for the directed retry (0.9.3)', async () => {
+  const queries = []
+  const fetched = []
+  const config = baseConfig()
+  config.__engines = [budgetFillingEngine(queries)]
+  config.__fetchPage = doubaoPriceFetcher(fetched)
+  const result = await runResearch({
+    question: DOUBAO_QUESTION,
+    depth: 'standard',
+    mode: 'compare',
+    strategy: resolveStrategy({ questionKind: 'pricing', depth: 'standard', question: DOUBAO_QUESTION }),
+    config,
+    llm: fakeLlm(doubaoPriceResponder),
+    selection,
+    logger: () => {},
+  })
+  // The retry ran even though ordinary selection had far more candidates than the
+  // 12-page budget: two slots were held back before selection, so it was not
+  // starved and the 豆包 row is backed by the vendor page it fetched.
+  assert.equal(result.stats.targetedRefill.skipped, null, JSON.stringify(result.stats.targetedRefill))
+  assert.deepEqual(result.stats.targetedRefill, { optionsTried: 1, pagesFetched: 1, optionsResolved: 1, skipped: null })
+  assert.ok(fetched.includes(DOUBAO_URL), JSON.stringify(fetched))
+  assert.ok(!result.gaps.some((gap) => gap.includes('选项「豆包」')), JSON.stringify(result.gaps))
+  assert.ok(result.sources.some((source) => source.url === DOUBAO_URL), JSON.stringify(result.sources))
+  assert.match(result.brief, /定向回补 1 项（解决 1）/)
+  // And the reserve did not spend the budget twice: 3 readable price seeds + 7
+  // ordinary pages (the two reserved slots were held back) + the 豆包 page.
+  assert.equal(result.stats.pagesFetched, 11, JSON.stringify(result.stats))
+})
+
+test('targeted refill says why it was skipped without page budget or wall-clock room (0.9.3)', async () => {
   // (a) quick depth: the price pack spends the whole 3-page budget on direct seeds.
   const quickQueries = []
   const quickConfig = baseConfig()
@@ -1781,10 +1850,15 @@ test('targeted refill stays off without page budget or wall-clock room (0.9.2)',
   })
   assert.equal(quick.stats.pagesFetched, 3, JSON.stringify(quick.stats))
   assert.ok(!quickQueries.some((query) => query.startsWith('豆包 ')), JSON.stringify(quickQueries))
-  assert.equal(quick.stats.targetedRefill.optionsTried, 0)
+  // 0.9.3 — the skip is reported, not swallowed: the option entered the retry even
+  // though no page was left to send its query.
+  assert.equal(quick.stats.targetedRefill.skipped, 'budget', JSON.stringify(quick.stats.targetedRefill))
+  assert.ok(quick.stats.targetedRefill.optionsTried >= 1, JSON.stringify(quick.stats.targetedRefill))
   const quickGap = quick.gaps.find((gap) => gap.includes('选项「豆包」'))
   assert.ok(quickGap, JSON.stringify(quick.gaps))
+  assert.match(quickGap, /页预算耗尽，未做定向检索/)
   assert.ok(!quickGap.includes('已定向检索'), quickGap)
+  assert.match(quick.brief, /定向回补跳过（预算不足）/)
 
   // (b) wall clock: a deep run whose remaining budget is pushed under 30s by the
   // time the retry stage is reached must not spend a query either.
@@ -1812,8 +1886,13 @@ test('targeted refill stays off without page budget or wall-clock room (0.9.2)',
     })
     assert.ok(timed.stats.pagesFetched < 30, JSON.stringify(timed.stats))
     assert.ok(!timeQueries.some((query) => query.startsWith('豆包 ')), JSON.stringify(timeQueries))
-    assert.equal(timed.stats.targetedRefill.optionsTried, 0)
-    assert.ok(timed.gaps.some((gap) => gap.includes('选项「豆包」')), JSON.stringify(timed.gaps))
+    assert.equal(timed.stats.targetedRefill.skipped, 'time', JSON.stringify(timed.stats.targetedRefill))
+    assert.ok(timed.stats.targetedRefill.optionsTried >= 1, JSON.stringify(timed.stats.targetedRefill))
+    const timedGap = timed.gaps.find((gap) => gap.includes('选项「豆包」'))
+    assert.ok(timedGap, JSON.stringify(timed.gaps))
+    assert.match(timedGap, /剩余时间不足，未做定向检索/)
+    assert.ok(!timedGap.includes('已定向检索'), timedGap)
+    assert.match(timed.brief, /定向回补跳过（时间不足）/)
   } finally {
     Date.now = realNow
   }
