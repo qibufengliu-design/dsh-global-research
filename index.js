@@ -8,6 +8,7 @@ import { createEngines, createRawFetcher } from './lib/engines.js'
 import { createPageFetcher } from './lib/fetch.js'
 import { DEPTH_PROFILES, runResearch } from './lib/pipeline.js'
 import { ResearchCache, cacheKey } from './lib/cache.js'
+import { ResearchSessions } from './lib/sessions.js'
 import { validateConfig } from './lib/config.js'
 import { Config } from './lib/schema.js'
 import { configureDomainTrust, isTimeSensitive, uniqueStrings } from './lib/util.js'
@@ -79,6 +80,7 @@ const OUTPUT_SCHEMA = {
     gaps: { type: 'array', items: { type: 'string' } },
     partial: { type: 'boolean' },
     depthUsed: { type: 'string', enum: ['quick', 'standard', 'deep'] },
+    researchId: { type: 'string', description: '本轮研究的会话 id；下一轮追问时传回来可复用已读页面，只补缺口。' },
     stats: {
       type: 'object',
       properties: {
@@ -86,11 +88,17 @@ const OUTPUT_SCHEMA = {
         llmRounds: { type: 'number' }, elapsedMs: { type: 'number' },
         cached: { type: 'boolean' },
         cachedAgeMinutes: { type: 'number' },
+        reusedPages: { type: 'number' },
+        resumed: { type: 'boolean' },
       },
     },
   },
   required: ['brief', 'confidence', 'sources', 'gaps', 'partial', 'depthUsed', 'stats'],
 }
+
+/** Keep the last few runs' pages and evidence for follow-up questions. */
+const SESSION_TTL_MS = 30 * 60 * 1000
+const SESSION_MAX = 8
 
 const DESCRIPTION = [
   '按"研究"方式回答一个开放问题：自动拆题、多引擎检索、精读网页、交叉验证、缺口回补，',
@@ -143,6 +151,9 @@ export function apply(ctx, rawConfig = {}) {
     ? new ResearchCache({ maxEntries: config.cache.maxEntries, ttlMs: config.cache.ttlMinutes * 60000 })
     : null
   const deepRuns = new Map()
+  // Follow-up runs reuse the previous run's pages and evidence instead of
+  // re-fetching them, so a "expand on point 2" question costs a fraction.
+  const sessions = new ResearchSessions({ maxEntries: SESSION_MAX, ttlMs: SESSION_TTL_MS })
 
   
 
@@ -164,6 +175,7 @@ export function apply(ctx, rawConfig = {}) {
       depth: { type: 'string', enum: ['auto', 'quick', 'standard', 'deep'], description: '研究深度，默认 auto（按问题难度自动选择）。' },
       focus: { type: 'array', items: { type: 'string' }, description: '评估维度，如 ["性能","许可证","迁移成本"]。' },
       context: { type: 'string', description: '追问时把上一轮简报里相关的结论/证据原文附上（≤2000 字）。不给时，省略式提问会被当作全新问题。' },
+      researchId: { type: 'string', description: '上一轮返回的 researchId；传回后可复用那轮已读的页面与证据，只补新缺口（30 分钟内有效）。' },
       outputLanguage: { type: 'string', enum: ['zh', 'en', 'auto'], description: '简报语言，默认 auto。' },
     },
     output: {
@@ -183,6 +195,10 @@ export function apply(ctx, rawConfig = {}) {
       if (question.length < 4) throw new Error('research 需要完整问题（question 字段），不能为空。')
       if (question.length > 2000) throw new Error('question 过长（上限 2000 字），请精简后重试。')
       const context = typeof args?.context === 'string' ? args.context.trim().slice(0, 2000) : ''
+      const researchId = typeof args?.researchId === 'string' ? args.researchId.trim() : ''
+      const resume = researchId ? sessions.get(researchId) : null
+      if (researchId && !resume) logger(`research session ${researchId} not found or expired; running fresh`)
+      let nextSession = null
 
       const web = ctx.get('web')
       const llm = ctx.get('llm')
@@ -197,7 +213,7 @@ export function apply(ctx, rawConfig = {}) {
       // "Latest / price / version" answers go stale in minutes; never serve
       // those from cache (a false positive only costs one re-run).
       const timeSensitive = isTimeSensitive(`${question} ${focus.join(' ')}`)
-      const key = cache && !timeSensitive && !context ? cacheKey({ question, depth, focus, language: outputLanguage }) : undefined
+      const key = cache && !timeSensitive && !context && !resume ? cacheKey({ question, depth, focus, language: outputLanguage }) : undefined
       if (cache && key) {
         const cached = cache.get(key)
         if (cached) {
@@ -224,6 +240,8 @@ export function apply(ctx, rawConfig = {}) {
         depth,
         outputLanguage,
         context,
+        resume,
+        onState: (snapshot) => { nextSession = snapshot },
         config: { ...config, __engines: engines, __fetchPage: fetchPage, __fetchRaw: fetchRaw },
         web,
         llm,
@@ -238,6 +256,11 @@ export function apply(ctx, rawConfig = {}) {
       // Cache before appending debug stats: the stored copy must not accumulate
       // per-call numbers, and partial runs may be missing evidence.
       if (cache && key && !result.partial) cache.set(key, JSON.parse(JSON.stringify(result)))
+      // Store only runs that produced evidence: an empty session would make the
+      // next follow-up "reuse" nothing but still claim a resume happened.
+      if (nextSession && (nextSession.pages?.length ?? 0) > 0) {
+        result.researchId = sessions.create(nextSession)
+      }
       if (config.debugStats) {
         const stats = result.stats ?? {}
         result.brief += `\n\n---\n检索统计：引擎 ${(stats.engines ?? []).join(',') || '无'} · 垂直源 ${(stats.verticals ?? []).join(',') || '无'}（${stats.verticalHits ?? 0} 条${Object.keys(stats.verticalsByEngine ?? {}).length ? '：' + Object.entries(stats.verticalsByEngine).map(([name, count]) => `${name} ${count}`).join('，') : ''}）· query ${stats.queries ?? 0} · 抓取 ${stats.pagesFetched ?? 0} 页 · 官方直取 ${stats.directUrls ?? 0}${(stats.refillQueries ?? []).length ? ` · 回补 ${stats.refillQueries.length} 条（${stats.refillQueries.map((query) => query.slice(0, 40)).join(' | ')}）` : ''} · 域名 ${(stats.hosts ?? []).slice(0, 8).join(',') || '无'} · 耗时 ${Math.round((stats.elapsedMs ?? 0) / 1000)}s`

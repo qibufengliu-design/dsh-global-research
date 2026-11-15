@@ -195,3 +195,22 @@ test('cache can be disabled through config', async () => {
   const result = await registered.research.execute({ question, depth: 'quick' }, {})
   assert.equal(result.stats.cached, undefined)
 })
+
+test('a follow-up can reuse the previous run pages through researchId', async () => {
+  const { registered } = fakeHarness()
+  const tool = registered.research
+  const first = await tool.execute({ question: 'Node 22 支持到什么时候', depth: 'quick' }, { agent: { id: 'follow-agent' } })
+  assert.match(first.researchId, /^rs_[0-9a-f]{16}$/)
+  const second = await tool.execute({ question: '它的维护期什么时候开始', depth: 'quick', researchId: first.researchId }, { agent: { id: 'follow-agent' } })
+  assert.equal(second.stats.resumed, true)
+  assert.ok(second.stats.reusedPages >= 1)
+  assert.match(second.researchId, /^rs_[0-9a-f]{16}$/)
+  assert.notEqual(second.researchId, first.researchId)
+})
+
+test('an unknown researchId falls back to a fresh run instead of failing', async () => {
+  const { registered } = fakeHarness()
+  const result = await registered.research.execute({ question: 'Node 22 支持到什么时候', depth: 'quick', researchId: 'rs_deadbeefdeadbeef' }, {})
+  assert.equal(result.stats.resumed, false)
+  assert.ok(result.brief.length > 0)
+})
