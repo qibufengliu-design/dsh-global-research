@@ -61,6 +61,37 @@ test('checkRepository reports missing files instead of throwing', () => {
   }
 })
 
+test('checkRepository rejects broken issue forms before GitHub hides them', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-issue-'))
+  try {
+    mkdirSync(join(dir, '.github', 'ISSUE_TEMPLATE'), { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ version: '1.2.3' }))
+    writeFileSync(
+      join(dir, '.github/ISSUE_TEMPLATE/bug_report.yml'),
+      [
+        'name: Bug 报告',
+        'body:',
+        '  - type: textbox',
+        '    id: detail',
+        '    attributes:',
+        '      label: 详情',
+        '  - type: input',
+        '    id: detail',
+        '    attributes:',
+        '      label: 重复 id',
+        '',
+      ].join('\n')
+    )
+    const { failures } = checkRepository(dir)
+    const joined = failures.join('\n')
+    assert.match(joined, /ISSUE_TEMPLATE\/bug_report\.yml 缺少必填顶层键 description/, joined)
+    assert.match(joined, /未知的 body 类型：textbox/, joined)
+    assert.match(joined, /id 重复：detail/, joined)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('parseDepthProfiles reads the real profile numbers', () => {
   const source = [
     'export const DEPTH_PROFILES = {',

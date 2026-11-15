@@ -43,7 +43,7 @@
 目标是把仓库维持在「企业级开源项目」的形态：结构固定、链接不断、版本与 tag 对齐、发版自动化。
 
 - **CI**（`.github/workflows/ci.yml`）：Node 20/22/24 矩阵跑零依赖校验 + **全部 `.js`/`.mjs` 的 `node --check`** + `node scripts/test-all.mjs`；`docs` job 跑 `node scripts/check-docs.mjs`。2026-11-15 实测：run #9（`dc040ff`）与 run #10（`2aa5d12`）四个 job 全部 `success`，Linux 上 352 例测试同样全绿（本机沙箱里 `node --test test/` 会 EPERM，属沙箱限制，不是代码问题）。
-- **整洁性检查**（`scripts/check-docs.mjs`）：必需文件齐不齐、README/docs/CONTRIBUTING/SECURITY/HANDOFF 的相对链接能不能解析、CHANGELOG 有没有 `[Unreleased]` 与当前版本条目、`package.json` 元数据是否完整且零依赖。改完文档先跑它。
+- **整洁性检查**（`scripts/check-docs.mjs`）：必需文件齐不齐、README/docs/CONTRIBUTING/SECURITY/HANDOFF 的相对链接能不能解析、CHANGELOG 有没有 `[Unreleased]` 与当前版本条目、`package.json` 元数据是否完整且零依赖、Issue 表单（`.github/ISSUE_TEMPLATE/*.yml`）的必填键与 body 类型是否合法（写坏了 GitHub 会静默不显示模板）。改完文档先跑它。
 - **发布一致性检查**（`scripts/check-release.mjs`，2026-11-15 23:14 加）：`package.json` 版本是 x.y.z 且 CHANGELOG 有对应小节、小节从新到旧排列、README 预算表与 `lib/pipeline.js` 的 `DEPTH_PROFILES` 逐字段一致、README/docs/CONTRIBUTING 里没有写死的测试例数；当前版本还没打 tag 时只给提示不判失败。已接进 CI 的 `docs & metadata` job，发布清单第 2 步与 `CONTRIBUTING.md` 也同步写了。
 - **Release 自动化**（`.github/workflows/release.yml`）：推 `v*` tag 时用 `CHANGELOG.md` 里该版本的段落建 GitHub Release，发布前校验 tag 与 `package.json.version` 一致，已存在的 Release 不覆盖；历史 tag 可在 Actions 里用 `workflow_dispatch` 补建（填 tag 名即可，不重打 tag；补建路径检出 main，只校验 tag 存在与 CHANGELOG 小节）。`v0.9.5` 已由该 workflow 自动建成。
 - **发布说明抽取**（`scripts/release-notes.mjs`）：`node scripts/release-notes.mjs 0.9.5` 打印该版本 CHANGELOG 段落，Release workflow 与单测共用。

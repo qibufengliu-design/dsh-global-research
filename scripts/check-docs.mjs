@@ -4,16 +4,17 @@
  *
  *   node scripts/check-docs.mjs
  *
- * 检查四件事：
+ * 检查五件事：
  *   1. 企业级仓库需要的文件都在（README / CHANGELOG / 社区文件 / docs / 模板）；
  *   2. README、docs/、CONTRIBUTING、SECURITY、HANDOFF 里的相对链接都能解析；
  *   3. CHANGELOG 有 [Unreleased] 段，且有与 package.json 版本一致的条目；
- *   4. package.json 元数据齐全、运行时依赖为空。
+ *   4. package.json 元数据齐全、运行时依赖为空；
+ *   5. Issue 表单（.github/ISSUE_TEMPLATE/*.yml）的必填键与 body 类型合法，否则 GitHub 会静默不显示模板。
  *
  * 任何一项不通过就以非零码退出并列出具体文件，方便在 CI 里一眼看出哪里不整齐。
  * `checkRepository()` 同时被 test/repo-hygiene.test.js 直接调用，测试不落盘、不起子进程。
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -63,6 +64,54 @@ const LINK_SCAN = [
 
 // [文字](目标 "可选标题") —— 图片语法 ![..](..) 也走这里
 const LINK_PATTERN = /!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g
+
+const BODY_TYPES = new Set(['markdown', 'input', 'textarea', 'dropdown', 'checkboxes'])
+
+/**
+ * Issue 模板是 YAML，但没有引依赖就不做完整解析：只校验 GitHub Issue Forms 必需的
+ * 顶层键与 `body[].type` 白名单，能挡住「模板写坏 → 仓库页面上一个模板都不显示」这类问题。
+ * @param {string} root
+ * @param {{ fail: (m: string) => void, pass: (m: string) => void }} report
+ */
+function checkIssueTemplates(root, report) {
+  const dir = join(root, '.github', 'ISSUE_TEMPLATE')
+  if (!existsSync(dir)) return
+  const forms = readdirSync(dir).filter((file) => file.endsWith('.yml') || file.endsWith('.yaml'))
+  const problems = []
+  let checked = 0
+
+  for (const file of forms) {
+    if (file === 'config.yml') continue
+    checked += 1
+    const body = readFileSync(join(dir, file), 'utf8')
+    for (const [key, label] of [['name', 'name'], ['description', 'description'], ['body', 'body']]) {
+      if (!new RegExp(`^${key}:\\s*\\S`, 'm').test(body)) {
+        problems.push(`.github/ISSUE_TEMPLATE/${file} 缺少必填顶层键 ${label}`)
+      }
+    }
+    const types = [...body.matchAll(/^\s*-\s*type:\s*([A-Za-z_]+)/gm)].map((m) => m[1])
+    if (!types.length) problems.push(`.github/ISSUE_TEMPLATE/${file} 的 body 里没有任何 \`- type:\``)
+    const unknown = [...new Set(types.filter((type) => !BODY_TYPES.has(type)))]
+    if (unknown.length) {
+      problems.push(`.github/ISSUE_TEMPLATE/${file} 有未知的 body 类型：${unknown.join('、')}（允许 ${[...BODY_TYPES].join('/')}）`)
+    }
+    const ids = [...body.matchAll(/^\s*id:\s*([A-Za-z0-9_-]+)/gm)].map((m) => m[1])
+    const duplicated = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))]
+    if (duplicated.length) problems.push(`.github/ISSUE_TEMPLATE/${file} 的 id 重复：${duplicated.join('、')}`)
+  }
+
+  const configPath = join(dir, 'config.yml')
+  if (existsSync(configPath)) {
+    const config = readFileSync(configPath, 'utf8')
+    if (!/^blank_issues_enabled:/m.test(config)) {
+      problems.push('.github/ISSUE_TEMPLATE/config.yml 缺少 blank_issues_enabled')
+    }
+    checked += 1
+  }
+
+  for (const problem of problems) report.fail(problem)
+  if (checked && !problems.length) report.pass(`Issue 模板 ${checked} 个结构完整`)
+}
 
 /**
  * @param {string} [root] 仓库根目录
@@ -167,6 +216,9 @@ export function checkRepository(root = DEFAULT_ROOT) {
       else pass('package.json files 指向的路径都存在')
     }
   }
+
+  // 5. Issue 模板 ------------------------------------------------------------
+  checkIssueTemplates(root, { fail, pass })
 
   return { passes, failures }
 }
