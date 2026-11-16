@@ -36,7 +36,7 @@
 
 - **只打 annotated tag**：`git tag -a vX.Y.Z -m "..."`。轻量 tag 不带作者/日期/说明，在 `git describe` 与 Release 页面上信息缺失。
 - **已推送的 tag 不移动、不删除**。发布后发现问题，按 SemVer 再发一个 PATCH，而不是 `git tag -f` + `push --force`。
-  - 历史例外：`v0.9.2` 是早期留下的轻量 tag，指向 `67a8613`，保留原样不重打；`v0.9.3` 指向材料粘贴区提交，紧随其后的修复另发 `v0.9.4`，见 CHANGELOG 里的说明；`v1.0.0` 也是轻量 tag（2026-11-16 由另一条会话直接 `git tag` 后推送，指向 `06171f5`），已生成的 Release 不受影响，同样**保留不重打**——1.0.1 起恢复只打 annotated。
+  - 历史例外：`v0.9.2` 是早期留下的轻量 tag，指向 `67a8613`，保留原样不重打；`v0.9.3` 指向材料粘贴区提交，紧随其后的修复另发 `v0.9.4`，见 CHANGELOG 里的说明；`v1.0.0` 与 `v1.0.2` 也是轻量 tag（2026-11-16 由另一条会话直接 `git tag` 后推送，分别指向 `06171f5`、`f8a235f`），已生成的 Release 不受影响，同样**保留不重打**——1.0.1 起恢复只打 annotated。
 - tag 必须指向 `package.json.version` 相同的提交，`release.yml` 会在发布前校验，不一致直接失败。
 - tag 必须打在 `main` 上的提交：`release.yml` 用 `git merge-base --is-ancestor` 校验，分支上的提交即使打了 tag 也不会发版。
 - 不发布预发布版本（`v1.0.0-rc.1` 之类）时，不要用 `v` 之外的前缀。

@@ -2,18 +2,18 @@
 
 ## 一句话状态
 
-`research` 工具已达 1.0.0：把一个开放问题做成**带 `[S#]` 引用、可核查、可复跑**的研究简报，零第三方依赖。0.6 → 1.0 的能力线已收口（策略引擎与取源通道、证据分级与排序、答案层、运维自检），**接口、简报结构、置信度口径、预算模型冻结**；做不到的部分集中写在 [LIMITATIONS.md](LIMITATIONS.md)。本版没有功能改动，代码等同 0.10.1（`bdf39ed`），只做版本收口与文档整理。
+`research` 工具已达 1.0（当前 1.0.2）：把一个开放问题做成**带 `[S#]` 引用、可核查、可复跑**的研究简报，零第三方依赖。0.6 → 1.0 的能力线已收口（策略引擎与取源通道、证据分级与排序、答案层、运维自检），**接口、简报结构、置信度口径、预算模型冻结**；做不到的部分集中写在 [LIMITATIONS.md](LIMITATIONS.md)。本版没有功能改动，代码等同 0.10.1（`bdf39ed`），只做版本收口与文档整理。
 
-**2026-11-16 01:1x 发布守门核实**：`refs/heads/main` = `06171f5`（`chore(release): 1.0.0`），tag `v1.0.0` 已推送并生成 Release id **446220562**（正文 2451 字，`node scripts/verify-release.mjs v1.0.0` 与 tag 上的 CHANGELOG 逐字一致）；三门槛 `check-docs` / `check-release` / `test-all` 全绿（19 个文件，实测 **417 例**——发布正文里写的 415 是发布那一刻的计数，之后 repo-hygiene 又加了 2 例）；CI 在 Node 20/22/24 + `windows smoke (node 22)` 上跑同一套测试，另有 CodeQL。<br>**注意**：`v1.0.0` 是**轻量 tag**（另一条线直接 `git tag` 后推送，与历史遗留的 `v0.9.2` 同类），1.0.1 起恢复「只打 annotated tag」的规矩；已推送的 tag 不移动、不删除，所以这个例外只记录不修正。
+**2026-11-16 01:1x 发布守门核实**：`refs/heads/main` = `06171f5`（`chore(release): 1.0.0`），tag `v1.0.0` 已推送并生成 Release id **446220562**（正文 2451 字，`node scripts/verify-release.mjs v1.0.0` 与 tag 上的 CHANGELOG 逐字一致）；三门槛 `check-docs` / `check-release` / `test-all` 全绿（19 个文件，实测 **417 例**——发布正文里写的 415 是发布那一刻的计数，之后 repo-hygiene 又加了 2 例）；CI 在 Node 20/22/24 + `windows smoke (node 22)` 上跑同一套测试，另有 CodeQL。<br>**注意**：`v1.0.0` 是**轻量 tag**（另一条线直接 `git tag` 后推送，与历史遗留的 `v0.9.2` 同类），已推送的 tag 不移动、不删除，所以这个例外只记录不修正（`v1.0.1` 从未打 tag，`v1.0.2` 同样是轻量 tag，见下条）。
 
-**2026-11-16 02:12 巡检核实**：`refs/heads/main` = `a332c73`（`fix: 1.0.2 cost column semantics`），`package.json.version` 仍是 `1.0.0`；`CHANGELOG.md` 最上面已有 `1.0.1`/`1.0.2` 两个待发布小节但尚未打 tag，1.0.1 与 1.0.2 都还**没有** Release 页（发布守门等另一条线的发布提交）。此时 `node scripts/check-docs.mjs`、`node scripts/check-release.mjs` 在 `a332c73` 上均通过（`check-release` 只给「待发布小节」提示，不判失败）；`a332c73` 之后的下一轮守门对象是 1.0.2。
+**2026-11-16 08:45 发布守门核实（1.0.2）**：`refs/heads/main` = `5d719ef`（= 1.0.2 发布提交 `f8a235f` + 本文档更新），`package.json.version` = `1.0.2`；annotated/轻量 tag **`v1.0.2`** 指向 `f8a235f`（**轻量 tag**，第三例），Release 页 id **446257259**（正文 1013 字，`node scripts/verify-release.mjs v1.0.2` 与 tag 上的 CHANGELOG 逐字一致）；三门槛 `check-docs` / `check-release` / `test-all` 全绿（19 个文件，实测 **426 例**），CI 与 CodeQL 在 `5d719ef`、`f8a235f` 上均 success。<br>**1.0.1 的处置**：`4d436ed`（compare 选项解析与空格填充）当时只进了 CHANGELOG 的 `[1.0.1]` 小节，没有 bump `package.json`、也没有打 tag，所以远端没有 `v1.0.1`、也没有对应 Release 页；它的修复内容随 `v1.0.2` 一起发布（`[1.0.2]` 小节开头写明了这一点）。
 
 ## 仓库与版本
 
-- 本地：`D:\Total\dsh-global-research`（git，`package.json.version` = `1.0.0`）
+- 本地：`D:\Total\dsh-global-research`（git，`package.json.version` = `1.0.2`）
 - 远端：<https://github.com/qibufengliu-design/dsh-global-research>
 - 版本事实来源：`package.json.version`；`scripts/retrieval-check.mjs` 的 `VERSION` 与它同步（自检输出里会打印版本），其余地方不重复写版本号。
-- 历史：0.6.0 起按「一版一提交 + `vX.Y.Z` tag」发布，`v0.9.0`–`v1.0.0` 均已推送到远端，13 个版本各自有 Release 页（`v0.9.0`–`v0.9.4` 由 2026-11-15 用 API 补建，之后由 `release.yml` 在推 tag 时自动创建）。除 `v0.9.2`（历史遗留）与 `v1.0.0`（另一条线直接推的轻量 tag）外都是 annotated tag。
+- 历史：0.6.0 起按「一版一提交 + `vX.Y.Z` tag」发布，`v0.9.0`–`v1.0.2` 均已推送到远端，14 个版本各自有 Release 页（`v1.0.1` 从未打 tag，其修复并入 `v1.0.2`）（`v0.9.0`–`v0.9.4` 由 2026-11-15 用 API 补建，之后由 `release.yml` 在推 tag 时自动创建）。除 `v0.9.2`（历史遗留）、`v1.0.0`、`v1.0.2`（另一条线直接推的轻量 tag）外都是 annotated tag。
 - 变更历史全在 [CHANGELOG.md](CHANGELOG.md)（1.0.0 小节是 0.6 → 1.0 的能力线汇总），本文不复制。
 
 ## 怎么跑
