@@ -43,7 +43,7 @@
 - `README.md`：预算墙钟 120/240/360s；开发段改「逐文件跑全部测试」；新增 Release 徽章。
 - `docs/configuration.md`（`timeoutMs` deep 下限 360s）、`docs/development.md`（去写死例数）、`docs/architecture.md`（证据抽取 2 页一批并行 + 单批失败回落启发式）。
 - `CHANGELOG.md`：0.9.5 增加「### 仓库」段。
-- `HANDOFF.md`：状态句、0.9.5 条目、新增「仓库规整」节、远端手工清单、0.9.6 计划（相关性闸门原型备份在 `D:\Total\.tmp-gate-backup\`）。
+- `HANDOFF.md`：状态句、0.9.5 条目、新增「仓库规整」节、远端手工清单、0.9.6 计划（相关性闸门原型备份在 `<workspace>/.tmp-gate-backup\`）。
 
 ## 3. 验证证据
 
@@ -65,7 +65,7 @@
 ## 5. 之后每次发版的固定动作
 
 ```powershell
-cd D:\Total\dsh-global-research
+cd <workspace>/dsh-global-research
 node scripts/check-docs.mjs
 node scripts/test-all.mjs
 # 改 package.json version + CHANGELOG 新小节，然后：

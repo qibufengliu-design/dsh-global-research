@@ -2,7 +2,7 @@
 
 - 状态：设计定稿，待实施（不写实现代码）
 - 日期：2026-11-15
-- 对象：`@local/dsh-global-research`（`D:\Total\dsh-global-research`，v0.4.0，163 例测试全绿）
+- 对象：`@local/dsh-global-research`（`<workspace>/dsh-global-research`，v0.4.0，163 例测试全绿）
 - 范围：`lib/pipeline.js`、`lib/brief.js`、`lib/verticals.js`、`lib/util.js`、`lib/cache.js`、`index.js`、新增 `lib/strategy.js`
 - 一句话：把散落在 6 处的"这是什么类型的问题"收编成一次 `classify()`，把"这种类型该怎么查、怎么写"变成可覆盖的数据包 `resolveStrategy()`；管线只多收一个参数。
 

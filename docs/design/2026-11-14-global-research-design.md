@@ -213,7 +213,7 @@ P2 已实现于 `lib/verticals.js`：按问题文本打分取前 2 个源，每�
 ## 10. 包结构
 
 ```
-D:\Total\dsh-global-research\
+
   package.json          # name @local/dsh-global-research, type module, dsh.bundle.patch
   cordis.patch.yml      # insert 一条 global-research
   index.js              # export const inject / Config / apply：注册工具 + skill

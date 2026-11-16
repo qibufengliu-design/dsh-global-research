@@ -14,4 +14,4 @@
 
 阅读顺序建议：`global-research-design` → `strategies-design` → `source-plan-design` → `p5-research-hardening` → `regression-0.6`。
 
-> 这些文件原先在 `D:\Total\docs\superpowers\specs\`（工作区级），1.0.2 起镜像进仓库，方便迁移后追溯；原位置可能仍有更新版本，以仓库镜像为准的约定见 `HANDOFF.md`。
+> 这些文件原先在 `docs/design/`（工作区级），1.0.2 起镜像进仓库，方便迁移后追溯；原位置可能仍有更新版本，以仓库镜像为准的约定见 `HANDOFF.md`。
