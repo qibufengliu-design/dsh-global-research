@@ -1,8 +1,8 @@
-# 交接：全球深度研究插件（1.1.1）
+# 交接：全球深度研究插件（1.1.2）
 
 ## 一句话状态
 
-`research` 工具已达 1.1（当前 `1.1.1`）：把一个开放问题做成**带 `[S#]` 引用、可核查、可复跑**的研究简报，零第三方依赖。0.6 → 1.0 的能力线已收口（策略引擎与取源通道、证据分级与排序、答案层、运维自检），1.1.0 在此基础上补了三块「可验证」：**可度量评测**（`scripts/eval.mjs` 固定 10 题分数表，可跨版本对比）、**判据校验**（`## 判据` 每条要有数字阈值，否则标「（推断）」并降档）、**pricing 渲染兜底**（JS 壳价目页走独立的 Jina 渲染预算取回，按 `via: 'render'` 降档）。1.1.1 只修 1.1.0 实跑暴露的对比题缺陷（括号内联候选清单、对比格 claim 自证、表外价格句回填、冲突段空类占位、渲染兜底计数与实际采用对齐），接口、简报结构、置信度口径、预算模型仍然冻结；做不到的部分集中写在 [LIMITATIONS.md](LIMITATIONS.md)。
+`research` 工具已达 1.1（当前 `1.1.2`）：把一个开放问题做成**带 `[S#]` 引用、可核查、可复跑**的研究简报，零第三方依赖。0.6 → 1.0 的能力线已收口（策略引擎与取源通道、证据分级与排序、答案层、运维自检），1.1.0 在此基础上补了三块「可验证」：**可度量评测**（`scripts/eval.mjs` 固定 10 题分数表，可跨版本对比）、**判据校验**（`## 判据` 每条要有数字阈值，否则标「（推断）」并降档）、**pricing 渲染兜底**（JS 壳价目页走独立的 Jina 渲染预算取回，按 `via: 'render'` 降档）。1.1.1 只修 1.1.0 实跑暴露的对比题缺陷（括号内联候选清单、对比格 claim 自证、表外价格句回填、冲突段空类占位、渲染兜底计数与实际采用对齐）；1.1.2 修「置信度与证据强度不对齐」——让官方占比与采用条数真正进入判定，并把「官方」统一成 `isPrimarySource()` 一个口径，接口、简报结构、预算模型仍然冻结；做不到的部分集中写在 [LIMITATIONS.md](LIMITATIONS.md)。
 
 **2026-11-16 01:1x 发布守门核实**：`refs/heads/main` = `06171f5`（`chore(release): 1.0.0`），tag `v1.0.0` 已推送并生成 Release id **446220562**（正文 2451 字，`node scripts/verify-release.mjs v1.0.0` 与 tag 上的 CHANGELOG 逐字一致）；三门槛 `check-docs` / `check-release` / `test-all` 全绿（19 个文件，实测 **417 例**——发布正文里写的 415 是发布那一刻的计数，之后 repo-hygiene 又加了 2 例）；CI 在 Node 20/22/24 + `windows smoke (node 22)` 上跑同一套测试，另有 CodeQL。<br>**注意**：`v1.0.0` 是**轻量 tag**（另一条线直接 `git tag` 后推送，与历史遗留的 `v0.9.2` 同类），已推送的 tag 不移动、不删除，所以这个例外只记录不修正（`v1.0.1` 从未打 tag，`v1.0.2` 同样是轻量 tag，见下条）。
 
@@ -12,19 +12,21 @@
 
 **2026-11-16 11:06 发布守门核实（1.1.1）**：`refs/heads/main` = `b5ac7cd`（`chore(release): 1.1.1`），`package.json.version` = `1.1.1`；tag **`v1.1.1`** 指向 `b5ac7cd`（**轻量 tag**，第五例），Release 页 id **446562656**（正文 2655 字，`node scripts/verify-release.mjs v1.1.1` 与 tag 上的 CHANGELOG 逐字一致）；三门槛全绿（**20 个文件、实测 464 例**；1.1.0 时为 458 例）。<br>**本次守门补的内容**：`[Unreleased]` 里还留着两条「### 仓库」副本——它们已随 1.1.0 写进正式小节，而且措辞是内部协作口径（「另一条线先合入后再删」），不适合出现在对外变更日志里，已清空（提交 `80af670`）；同时 `.gitignore` 忽略仓库根目录的 `_*.mjs` 一次性脚本（`_rel.mjs` 这种发版前改版本号的小工具，正式脚本都在 `scripts/`），避免另一条线用 `git add -A` 把它带进仓库。
 
+**2026-11-16 14:10 发布守门核实（1.1.2）**：`refs/heads/main` = `d501169`（`chore(release): 1.1.2`），`package.json.version` = `1.1.2`；tag **`v1.1.2`** 指向 `d501169`（**轻量 tag**，第六例），Release 页 id **446639742**（正文 4120 字，`node scripts/verify-release.mjs v1.1.2` 与 tag 上的 CHANGELOG 逐字一致）；三门槛全绿（**20 个文件、实测 467 例**；1.1.1 时为 464 例）。<br>**这一版改的是判定本身，不是阈值**：`computeConfidence()` 不再只看 cluster —— 新增 `evidenceConfidence(official, adopted)` 与 `gates.evidence = { adopted, official }`，与 `scripts/eval.mjs` 的 `expectedConfidence()` 逐条一致；「官方」统一为 `isPrimarySource()`（`isOfficialDomain()` ∪ `sourceTier() ∈ {doc-page, doc-index, repo-doc}`），`hasPrimaryClusters()`、`isOfficialPage()`、decision 闸门与置信度共用同一口径；`tech-selection` / `pricing` 两个策略包的无条件 `medium` 上限移除（该关切已由 `zeroEvidence` 闸门、缺段降档与 `checkCompareRows()` 承担），判据降档收窄到 decision 题且只封顶 `medium`；新增 `alignConfidenceSection()` 让简报里的「## 置信度」与返回的 `confidence` 永远一致。评测的 `expectedConfidence()` 一个字没改——对照表证明 1.1.1 的「官方 90% 报 low」是结构问题而非阈值问题。<br>**本次守门补的内容**：HANDOFF 快照推进到 1.1.2；README 的「为什么 confidence 经常是 low」补上 1.1.2 的口径变化（官方占比与采用条数进入判定、同厂商不同文档段计广度、`tech-selection`/`pricing` 不再有包级上限）；`LIMITATIONS.md` 的置信度条目补一句「1.1.2 起与 `eval.mjs` 的官方占比/采用条数口径对齐」；`docs/release.md` 的轻量 tag 例外清单补 `v1.1.2`（指向 `d501169`）。
+
 ## 仓库与版本
 
-- 本地：`D:\Total\dsh-global-research`（git，`package.json.version` = `1.1.1`）
+- 本地：`D:\Total\dsh-global-research`（git，`package.json.version` = `1.1.2`）
 - 远端：<https://github.com/qibufengliu-design/dsh-global-research>
 - 版本事实来源：`package.json.version`；`scripts/retrieval-check.mjs` 的 `VERSION` 与它同步（自检输出里会打印版本），其余地方不重复写版本号。
-- 历史：0.6.0 起按「一版一提交 + `vX.Y.Z` tag」发布，`v0.9.0`–`v1.1.1` 均已推送到远端，16 个版本各自有 Release 页（`v1.0.1` 从未打 tag，其修复并入 `v1.0.2`）（`v0.9.0`–`v0.9.4` 由 2026-11-15 用 API 补建，之后由 `release.yml` 在推 tag 时自动创建）。除 `v0.9.2`（历史遗留）、`v1.0.0`、`v1.0.2`、`v1.1.0`、`v1.1.1`（另一条线直接推的轻量 tag）外都是 annotated tag。
+- 历史：0.6.0 起按「一版一提交 + `vX.Y.Z` tag」发布，`v0.9.0`–`v1.1.2` 均已推送到远端，17 个版本各自有 Release 页（`v1.0.1` 从未打 tag，其修复并入 `v1.0.2`）（`v0.9.0`–`v0.9.4` 由 2026-11-15 用 API 补建，之后由 `release.yml` 在推 tag 时自动创建）。除 `v0.9.2`（历史遗留）、`v1.0.0`、`v1.0.2`、`v1.1.0`、`v1.1.1`、`v1.1.2`（另一条线直接推的轻量 tag）外都是 annotated tag。
 - 设计笔记归档在 [docs/design/](docs/design/README.md)（各版设计稿、真实网络回归记录、仓库审计记录，索引在该目录的 README）
 - 变更历史全在 [CHANGELOG.md](CHANGELOG.md)（1.0.0 小节是 0.6 → 1.0 的能力线汇总），本文不复制。
 
 ## 怎么跑
 
 ```powershell
-node scripts/test-all.mjs        # 逐文件跑全部测试（20 个文件 / 464 例，2026-11-16 实测全绿）
+node scripts/test-all.mjs        # 逐文件跑全部测试（20 个文件 / 467 例，2026-11-16 实测全绿）
 node scripts/check-docs.mjs      # 仓库整洁性：必需文件、链接、CHANGELOG、零依赖、参数表、JSON 示例、文档命令、密钥/本机路径、workflow 结构、docs 索引
 node scripts/check-release.mjs   # 发布一致性：版本号 ↔ CHANGELOG 小节 ↔ retrieval-check 的 VERSION、预算表 ↔ DEPTH_PROFILES、文档里没有写死的例数
 node scripts/verify-release.mjs vX.Y.Z   # 远端 Release 正文 ↔ 该 tag 上的 CHANGELOG 小节（逐字）
