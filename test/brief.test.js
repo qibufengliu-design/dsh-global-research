@@ -127,6 +127,56 @@ test('confidence breadth counts documentation sections, not just hosts (0.9.1)',
   assert.equal(computeConfidence([cluster('a', ['https://a.com/1']), cluster('b', ['https://a.com/2'])]), 'low')
 })
 
+// 1.1.2 — 「官方占比高 + 采用条数足够」 must reach medium/high. The matrix alone
+// could not: every cluster of a real run is `unverified` (one vendor's docs are
+// one source), and the adopted count never reached the function at all, so an
+// 8/8-official run still read `low`. The base verdict now comes from the adopted
+// mix — the same rule scripts/eval.mjs scores — and the gates below still cap it.
+test('confidence follows the adopted first-party mix (1.1.2)', () => {
+  const firstParty = (n) => Array.from({ length: n }, (_, i) => `https://docs.spring.io/spring-ai/reference/api/page-${i}.html`)
+  const secondHand = (n) => Array.from({ length: n }, (_, i) => `https://blog-${i}.example.com/node-lts`)
+  const at = (mix, adopted, official) => computeConfidence(
+    [cluster('Node 22 是当前 LTS 版本', mix)],
+    { evidence: { adopted, official } },
+  )
+
+  // 全官方 8 条 → high.
+  assert.equal(at(firstParty(8), 8, 8), 'high')
+  // 官方 6 + 二手 2: 75% first-party, still high.
+  assert.equal(at([...firstParty(6), ...secondHand(2)], 8, 6), 'high')
+  // 官方 3 + 二手 4: 42.9% clears the medium floor but not the high bar (50%).
+  assert.equal(at([...firstParty(3), ...secondHand(4)], 7, 3), 'medium')
+  // 官方 3 + 二手 5: 37.5% sits below the 40% floor the eval scores → low.
+  assert.equal(at([...firstParty(3), ...secondHand(5)], 8, 3), 'low')
+  // 全二手 8 条: no first-party page at all.
+  assert.equal(at(secondHand(8), 8, 0), 'low')
+  // One adopted page is never stronger than low, however official it is.
+  assert.equal(at(firstParty(1), 1, 1), 'low')
+})
+
+test('conflicts, zero-evidence rows and soft gates still cap a strong mix (1.1.2)', () => {
+  const firstParty = (n) => Array.from({ length: n }, (_, i) => `https://docs.spring.io/spring-ai/reference/api/page-${i}.html`)
+  const strong = { evidence: { adopted: 8, official: 8 } }
+  const mixed = [cluster('Node 22 是当前 LTS 版本', firstParty(8))]
+
+  // 有零证据选项: an unresolved comparison row is a medium at best.
+  assert.equal(computeConfidence(mixed, { ...strong, zeroEvidence: 1 }), 'medium')
+  // 有未解决冲突 + 另一条已确认结论: capped at medium, never high.
+  const disputed = [
+    { ...cluster('Node 22 是当前 LTS 版本', firstParty(8)), status: 'disputed' },
+    cluster('另一条结论', ['https://a.com/x', 'https://b.com/y']),
+  ]
+  assert.equal(computeConfidence(disputed, strong), 'medium')
+  // 有未解决冲突且没有一条已确认结论: low.
+  assert.equal(computeConfidence([disputed[0]], strong), 'low')
+  // 缺口多 (a required section is missing): one notch below the mix.
+  assert.equal(computeConfidence(mixed, { ...strong, missingSections: true }), 'medium')
+  // 缺一手来源: the pack's own cap.
+  assert.equal(computeConfidence(mixed, { ...strong, missingPrimary: true }), 'low')
+  // A pack's hard ceiling still wins over a perfect mix.
+  assert.equal(computeConfidence(mixed, { ...strong, gate: 'medium' }), 'medium')
+})
+
 test('fallbackBrief is deterministic and marks partial runs', () => {
   const clusters = [cluster('Node 22 is LTS', ['https://a.com', 'https://b.com'])]
   const brief = fallbackBrief({ question: 'which node', clusters, gaps: ['缺基准'], partial: true, reason: '超时' })
@@ -1593,6 +1643,28 @@ test('validateCriteria never doubles a provenance mark and skips 无 and citatio
   assert.match(report.brief, /^## 置信度\nlow$/m)
   // No 未解决 section: the note creates one, and only once.
   assert.equal(report.brief.match(/判据偏软：/g).length, 1)
+})
+
+// 1.1.2 — 判据 is a required section only for decision briefs (and a soft one is
+// a genuine decision risk). On a concept or comparison question the same prose
+// bullets were costing well-sourced answers a notch for no reason, which is the
+// other half of "the brief looks weaker than its evidence".
+test('判据校验 only costs a notch on decision briefs (1.1.2)', () => {
+  const brief = [
+    '## 判据',
+    '- 团队规模与迁移成本是否匹配 [S1]',
+    '',
+    '## 置信度', 'medium',
+  ].join('\n')
+  const decision = validateCriteria(brief, { confidence: 'medium', questionKind: 'decision' })
+  assert.equal(decision.downgraded, true)
+  assert.match(decision.brief, /^## 置信度\nlow$/m)
+  const concept = validateCriteria(brief, { confidence: 'medium', questionKind: 'concept' })
+  assert.equal(concept.downgraded, false)
+  assert.match(concept.brief, /^## 置信度\nmedium$/m)
+  assert.doesNotMatch(concept.brief, /判据偏软：/)
+  // The provenance mark is unaffected: it is about the line, not the verdict.
+  assert.match(concept.brief, /^- 团队规模与迁移成本是否匹配 \[S1\]$/m)
 })
 
 test('validateCriteria returns a brief without 判据 byte for byte (1.1.0)', () => {

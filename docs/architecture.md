@@ -105,6 +105,29 @@ research(question, depth, focus, mode, context, researchId, text, saveTo)
 - 页面兜底：模型只引用了部分页面时，没被引用的页面各补一条启发式证据（官方/通道页段落门槛 60 字符，其余 120 字符），避免「读到了却没采用」。
 - 证据抽取并行：按 2 页一批（`EVIDENCE_CONCURRENCY = 2`）同时抽，单批失败（典型是双批并发下的 provider 429）记日志后回落逐页启发式；结果按批序合并，`[S#]` 编号与「参考」顺序与串行完全一致（0.9.5）。
 
+## 置信度对齐（1.1.2）
+
+1.1.1 的实跑里，a-rag（官方占比 90%、采用 8 条）与 b-price（官方占比 100%、采用 8 条）都报 `low`，而 `scripts/eval.mjs` 的 `expectedConfidence()` 判 `high`；用户看到的简报也比证据弱。归因结果是三处结构问题叠加，不是阈值偏紧——所以 1.1.2 **没有改任何阈值**，`expectedConfidence()` 的判定式（`high` = 占比 ≥50% 且采用 ≥5；`low` = 占比 <40% 或采用 <2；其余 `medium`）逐字保留。
+
+- **一个「官方」定义**：`lib/util.js` 的 `isPrimarySource(url)` = `isOfficialDomain(url) || sourceTier(url) ∈ {doc-page, doc-index, repo-doc}`，与评测的官方口径同源。1.1.1 之前管线只看 `isOfficialDomain()` 白名单，`kubernetes.io/docs`、`haystack.deepset.ai/docs`、`dev.mysql.com/doc`、`pnpm.io/docs` 这类「厂商文档但域名不在白名单」的页面在评测里算官方、在管线里不算，于是 `hasPrimaryClusters()` 判成无一手来源、`primaryMissingCap: 'low'` 把结论压到 `low`，`stats.officialAdopted` 也少算。现在 `isOfficialPage()`、`hasPrimaryClusters()`、decision 闸门与 `computeConfidence()` 都用这一个定义；`.gov` / `.edu` / TRUSTED 域名仍按「高质量来源」计，一手门槛不变（manual/standard/deep 全部二手 → `low` 并写「未解决」缺口）。
+- **基准来自交付的证据，而不是 cluster 的确认状态**：`computeConfidence(clusters, gates)` 新增可选 `gates.evidence = { adopted, official }`，由 `evidenceConfidence(official, adopted)` 按上表给出基准。原因是真实运行里同一厂商的文档页只对应一个域名，`confirmed`（≥2 个独立域名确认）几乎总是够不上，广度最多把结果抬到 `medium`——而「采用了几条、其中几条是一手」根本没进入函数。没有快照的调用方（单元测试、插件 API）仍走 0.9.1 起的原矩阵，行为逐字不变。
+- **闸门在基准之后，顺序不变**：`disputed` → decision 闸门 → `zeroEvidence` → `missingPrimary` → `missingSections` → 包级 `gate`。每条闸门都只能把证据档降下来、绝不能被证据档抬过去：有未解决冲突封顶 `medium`（无已确认论断则 `low`）、比较/比价有零证据选项封顶 `medium`、缺一手来源按 `primaryMissingCap`、缺必需段落降一档、包级上限取最严值。
+- **包级上限收缩**：`tech-selection` 与 `pricing` 1.1.1 时无条件 `gate: 'medium'`，high 永远不可达（a-rag / b-price 正是这两类），这一版移除；比较表/价目完整性的关切由 `zeroEvidence` 闸门、缺段降档与 `checkCompareRows()` 度量。`fresh-data` 的时效上限、decision 包的上限保留。
+- **判据偏软只对 decision 降档，且封顶 `medium`**：`validateCriteria()` 现在接受 `questionKind`，「## 判据」本就是 decision 题的必需段落，因此 soft（>50% 行缺可量化阈值）只在 decision 生效；生效时是「封顶 medium」（high → medium），不是继续下调——「- 判据偏软：N/M 条缺少可量化阈值…」照写，但一条散文判据不会把有 8 条官方来源的结论压成 `low`。不传 `questionKind` 的直接调用保持 1.1.0 行为。
+- **简报与对象对齐**：`ensureSections()` 只在「## 置信度」缺段时写入，1.1.1 因此出现过简报写 `medium`、`result.confidence` 是 `low` 的分裂；`buildResult()` 现在用 `alignConfidenceSection()` 把该段重写成最终档位，两者永远同值。
+
+判定表（构造用例，同一批 clusters 分别走 1.1.1 矩阵与 1.1.2 证据口径）：
+
+| 构造用例 | 1.1.1 | 1.1.2 |
+| --- | --- | --- |
+| 全官方 8 条（采用 8 / 官方 8） | low | **high** |
+| 全二手 8 条（采用 8 / 官方 0） | medium | **low** |
+| 官方 3 条 + 二手 5 条（37.5%） | medium | **low** |
+| 全官方 8 条 + 1 条未解决冲突 | medium | medium（冲突封顶） |
+| 全官方 8 条 + 1 个零证据选项 | low | medium（选项缺口封顶） |
+
+`--offline` 总分 82.1 → 88.1，10 题置信度全部与 `expectedConfidence()` 一致、0 条置信度备注；`--real --only a-rag,b-price` 总分 97.0（a-rag 94.0、b-price 100.0，均 `high`）、0 条备注。因为两侧共用同一个官方口径与同一组阈值，评测判据与产品判定是「按构造一致」，而不是各自调参后碰巧相同。
+
 ## 价目页定向与比价表完整性（0.9.6）
 
 比价题（`pricing` / compare）在报告前会对零证据选项做一次定向回补（0.9.2 起），0.9.6 把这套链路收紧了：

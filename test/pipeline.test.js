@@ -119,6 +119,23 @@ function fakeFetcher(record = []) {
   }
 }
 
+// 1.1.2 — confidence now follows the adopted-source mix (the same rule the eval
+// scores), so a "normal run" fixture has to carry a normal mix instead of one
+// vendor page plus two unknown hosts. These two pages are first-party by
+// sourceTier (doc-page / repo-doc): a real Node-LTS run adopts pages like them.
+const FIRST_PARTY_PAGES = [
+  'https://nodejs.org/docs/latest-v22.x/api/index.html',
+  'https://github.com/nodejs/node/blob/main/doc/releases.md',
+  'https://a.com/3',
+]
+// Same idea for the compare fixture: vendor docs live on pnpm.io / bun.sh, which
+// the 官方域名 list never knew — only their doc page tier says "first-party".
+const COMPARE_FIRST_PARTY_PAGES = [
+  'https://pnpm.io/docs/motivation',
+  'https://bun.sh/docs/install',
+  'https://a.com/3',
+]
+
 function baseConfig(extra = {}) {
   return {
     maxDeepPerSession: 3,
@@ -130,7 +147,11 @@ function baseConfig(extra = {}) {
 
 test('standard run produces a cited brief and stops at page budget', async () => {
   const fetched = []
+  // baseConfig() pins its default engines after the `extra` spread, so the
+  // first-party mix has to be installed on the built config (same pattern as
+  // __fetchPage below).
   const config = baseConfig({ __fetchPage: fakeFetcher(fetched) })
+  config.__engines = [fakeEngine(FIRST_PARTY_PAGES)]
   const result = await runResearch({
     question: 'Node 22 是 LTS 吗？项目该用哪个版本',
     depth: 'standard',
@@ -790,10 +811,15 @@ test('no strategy pack and the concept pack produce the same result', async () =
 test('a declared missing section gets a placeholder and costs one confidence notch', async () => {
   const concept = resolveStrategy({ questionKind: 'concept', depth: 'standard' })
   const pack = { ...concept, brief: { requiredSections: ['## 迁移成本'] } }
+  // 1.1.2 — the notch is only observable when the base verdict is above `low`,
+  // so the run needs first-party evidence (the shared fixture's one vendor page
+  // plus two unknown hosts is now correctly `low`).
+  const config = baseConfig()
+  config.__engines = [fakeEngine(FIRST_PARTY_PAGES)]
   const run = (strategy) => runResearch({
     question: '什么是 JavaScript 事件循环',
     depth: 'standard',
-    config: baseConfig(),
+    config,
     llm: fakeLlm(defaultResponder),
     selection,
     logger: () => {},
@@ -2641,6 +2667,7 @@ test('a decision run labels unsourced 判据 lines and refuses high on blogs (0.
 
 test('a compare brief that omits the checklist gets 无 and one confidence notch (0.9.0)', async () => {
   const config = baseConfig()
+  config.__engines = [fakeEngine(COMPARE_FIRST_PARTY_PAGES)]
   config.__fetchPage = compareFetcher()
   const run = (responder) => runResearch({
     question: 'pnpm 还是 yarn 还是 bun，该选哪个？',

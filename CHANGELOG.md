@@ -7,6 +7,47 @@
 
 ## [Unreleased]
 
+## [1.1.2]
+
+> 1.1.2 修「置信度与证据强度不对齐」：1.1.1 实跑里 a-rag（官方占比 90%、采用 8 条）与 b-price（官方占比 100%、采用 8 条）都报 `low`，而评测判据给出 `high`；用户侧的感受一致——官方来源占绝对多数的简报，读起来比证据弱。
+>
+> 根因不是阈值偏紧，所以这一版**没有放宽任何阈值**：`scripts/eval.mjs` 的 `expectedConfidence()`（high = 占比 ≥50% 且采用 ≥5；low = 占比 <40% 或采用 <2）一个字没改。改的是三处让判定看不到证据的结构问题，以及让既有闸门按同一套「官方」语义生效。
+
+### Fixed
+
+- **根因一：采用条数与官方占比从未进入判定（`lib/brief.js` 的 `computeConfidence()`）**：1.1.1 的基准只吃 `clusters`。真实运行里 11 个 cluster 全是 `unverified`——同一厂商的文档页只有一个域名，够不上「两个独立域名确认」；能抬到 `medium` 的只有广度 `strong.size >= 2`，于是 8/8 官方、8 条采用的运行停在 `medium`，再被后面的闸门压到 `low`，而 `stats.adopted` / `officialAdopted` 只是打印给人看的数字。新增 `evidenceConfidence(official, adopted)`（与 `expectedConfidence()` 逐条一致）与 `gates.evidence = { adopted, official }`：管线交付证据快照时以它作为基准，`disputed` 规则照旧（分歧是论断的属性，不是计数的属性）。没有快照的调用方（单元测试、插件 API）仍走 0.9.1 起的原矩阵，逐字不变。
+- **根因二：「官方」有两套定义（`lib/util.js` 新增 `isPrimarySource()`）**：管线用 `isOfficialDomain()`（白名单域名 + `.gov`），评测用 `sourceTier() ∈ {doc-page, doc-index, repo-doc}`。于是 `kubernetes.io/docs`、`haystack.deepset.ai/docs`、`dev.mysql.com/doc`、`pnpm.io/docs` 在评测里算官方、在管线里不算：`hasPrimaryClusters()` 判成「无一手来源」，`primaryMissingCap: 'low'` 直接把结论压到 `low`，`stats.officialAdopted` 也跟着少算（j-eval 3/3、h-compare-zh 2/3 在管线里只有 0 条官方）。`isPrimarySource(url) = isOfficialDomain(url) || sourceTier(url) ∈ {doc-page, doc-index, repo-doc}` 现在是唯一口径，`isOfficialPage()`、`hasPrimaryClusters()`、decision 闸门、`computeConfidence()` 共用；`.gov` / `.edu` / TRUSTED 域名仍是「高质量来源」，一手门槛不变。
+- **根因三：包级无条件 `gate: 'medium'` 叠上「判据偏软」降档（`lib/strategies.js` + `lib/brief.js` 的 `validateCriteria()` / `buildResult()`）**：`tech-selection` 与 `pricing` 两个包把上限写死成 `medium`（a-rag / b-price 正好是这两类），`high` 永远不可达；随后 `validateCriteria()` 再看「## 判据」——评测 fixture 与真跑模板都只写一条带 `[S1]` 的散文判据，1/1 判为软行，`medium → low`。两层叠加就是「官方 90% 报 low」。这一版移除这两个包的无条件上限（比较表/价目完整性的关切已由 `zeroEvidence` 闸门、缺段降档与 `checkCompareRows()` 度量；`fresh-data` 的时效上限与 decision 包的上限保留），并把判据降档收窄：只对 `decision` 题生效（`questionKind` 由 `buildResult()` 传入），且对 decision 是**封顶 `medium`** 而不是继续下调——「- 判据偏软：N/M 条缺少可量化阈值…」照写，但一条软判据不会把有证据的判断压成 `low`。直接调用 `validateCriteria()` 且不传 `questionKind` 的旧调用方保持 1.1.0 行为。
+- **简报与对象对齐（`lib/brief.js` 新增 `alignConfidenceSection()`）**：`ensureSections()` 只在「## 置信度」缺段时写入，所以 1.1.1 的离线 e-so / i-paper / j-eval 出现过简报写 `medium`、`result.confidence` 是 `low` 的分裂。`buildResult()` 现在把该段重写成最终生效的档位，读到的「## 置信度」与返回的 `confidence` 永远同一个值。
+
+判定表（构造用例，同一批 clusters 走 1.1.1 的矩阵 / 1.1.2 的证据口径）：
+
+| 构造用例 | 1.1.1 | 1.1.2 |
+| --- | --- | --- |
+| 全官方 8 条（采用 8 / 官方 8） | low | **high** |
+| 全二手 8 条（采用 8 / 官方 0） | medium | **low** |
+| 官方 3 条 + 二手 5 条（37.5%） | medium | **low** |
+| 全官方 8 条 + 1 条未解决冲突 | medium | medium（冲突封顶） |
+| 全官方 8 条 + 1 个零证据选项 | low | medium（选项缺口封顶） |
+
+- 官方 3 + 二手 5 落到 `low` 是与评测同一口径的结果：37.5% 低于 40% 地板；4 条官方 + 4 条二手（50%）才是 `high`，43%（3/7）是 `medium`。
+- 闸门顺序不变且都在证据档之后：`disputed` → decision 闸门 → `zeroEvidence` → `missingPrimary` → `missingSections` → 包级 `gate`。证据再强也抬不过任何一条闸门，缺口多/有冲突/判据偏软仍然降档。
+
+### 评测
+
+- `--offline`：总分 82.1 → **88.1**；10 题的置信度全部与 `expectedConfidence()` 一致（a-rag / b-price / d-node / f-legal / g-learn / h-compare-zh / j-eval 从 `low` 回到应有的 `medium`），**0 条置信度备注**（剩余 3 条是既有的分类提示，与置信度无关）。
+- `--real --only a-rag,b-price`：**97.0 分，0 条备注**。a-rag 84.3 → 94.0（10 条来源、官方占比 80% → `high`），b-price 100.0（9 条来源、官方占比 100% → `high`）。真跑里 id 为 `b-price` 的题仍会出现「zero-evidence options: 豆包 → targeted refill resolved」，回补成功后不触发零证据封顶。
+
+### Tests
+
+- `test/brief.test.js` 新增 3 例：证据口径 6 个断言（全官方 8 条 → high、官方 6 + 二手 2 → high、官方 3 + 二手 4 → medium、官方 3 + 二手 5 → low、全二手 8 条 → low、仅 1 条采用 → low）；闸门 6 个断言（零证据封顶 medium、冲突 + 已确认 → medium、只有冲突 → low、缺段降一档、缺一手 → low、包级 gate 优先）；以及「判据校验只对 decision 降档」（decision：medium → low 并写判据偏软；concept：保持 medium 且不写 note，`（推断）` 标记照旧）。
+- `test/pipeline.test.js` 的置信度相关用例改用「一手来源混排」的 fixture（`FIRST_PARTY_PAGES` / `COMPARE_FIRST_PARTY_PAGES`，通过构造后 `config.__engines = …` 安装——`baseConfig()` 的 `__engines` 写在 `...extra` 之后，会覆盖入参），否则共享 fixture 只有 1/3 一手来源，按新口径本就该是 `low`，「缺段降一档」的断言就观察不到。
+- 全量：`node scripts/test-all.mjs` → **20 个测试文件、467 例全绿**（1.1.1 为 464 例）。
+
+### 文档
+
+- `docs/architecture.md` 新增「置信度对齐（1.1.2）」一节：一个「官方」定义、证据口径的基准与闸门顺序、包级上限的收缩、判据降档只对 decision、简报段与对象对齐，附 before/after 判定表。
+
 ## [1.1.1]
 
 > 1.1.1 修 1.1.0 实跑暴露的四个对比题缺陷，全部落在既有函数内部，`package.json`、接口、预算模型与简报结构不变。实测题：`国内四家大模型 API（DeepSeek、通义千问、豆包、Kimi）的价格怎么比，我们做一个小型 RAG 产品该选哪家`（standard / compare）。
