@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { runResearch, groupEvidence, looksLikeFollowUp, extractEvidence, pickDocBases, compareOptions, countOptionHits, evidenceSiteKey, officialBackstopQueries, PRICING_HOSTS, PRICING_SEEDS, pricingHostFor, pricingHostOfUrl, pricingSeedFor, hasPricingSeedText, pricingTargetQueries, isPricingEvidencePage, isPricingScenario } from '../lib/pipeline.js'
-import { downgradeConfidence } from '../lib/brief.js'
+import { downgradeConfidence, gradeSource, appendReferences, formatRetrievalFlow } from '../lib/brief.js'
 import { resolveStrategy } from '../lib/strategy.js'
 import { dedupeHits, rankHits } from '../lib/util.js'
 
@@ -2826,4 +2826,167 @@ test('a monthly plan price is not read as a token price (0.9.8)', async () => {
   const page = volcPricingPage('专业版套餐 199 元/月，赠送 100 万 tokens 额度')
   const items = await extractEvidence([page], null, { client: { jsonCall: async () => [] } })
   assert.deepEqual(items, [])
+})
+
+// --- 1.1.0: pricing render fallback -----------------------------------------
+
+const RENDER_SEED = 'https://api-docs.deepseek.com/quick_start/pricing'
+
+function renderedPricingText() {
+  return [
+    'Title: DeepSeek API Pricing',
+    `URL Source: ${RENDER_SEED}`,
+    'Published Time: 2026-10-01T00:00:00Z',
+    '',
+    'Markdown Content:',
+    'deepseek-chat 输入 1 元 / 百万 tokens，输出 2 元 / 百万 tokens。'.repeat(20),
+  ].join('\n')
+}
+
+function failingSeedFetcher() {
+  return async (url) => {
+    if (/api-docs\.deepseek\.com|help\.aliyun\.com|bigmodel\.cn|volcengine\.com/.test(url)) {
+      return { url, finalUrl: url, title: url, domain: new URL(url).hostname, ok: false, reason: 'JavaScript shell' }
+    }
+    return fakeFetcher()(url)
+  }
+}
+
+function renderRaw(record, body = renderedPricingText()) {
+  return async (url, options = {}) => {
+    if (!String(url).startsWith('https://r.jina.ai/')) return { status: 404, body: '' }
+    record.push({ url, accept: options.headers?.accept })
+    return { status: 200, body }
+  }
+}
+
+test('dead pricing seeds are rendered, and the render budget caps the renders (1.1.0)', async () => {
+  const renders = []
+  const config = baseConfig()
+  config.__fetchPage = failingSeedFetcher()
+  config.__fetchRaw = renderRaw(renders)
+  const result = await runResearch({
+    question: 'DeepSeek API 现在的输入价格是多少',
+    depth: 'standard',
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  // Four seeds fail; exactly RENDER_BUDGET = 2 renders are spent, in seed order.
+  assert.equal(result.stats.renderUsed, 2, JSON.stringify(result.stats.renderUsed))
+  assert.equal(renders.length, 2, JSON.stringify(renders))
+  assert.equal(renders[0].url, `https://r.jina.ai/${RENDER_SEED}`)
+  assert.equal(renders[0].accept, 'text/plain')
+  // The funnel line tells the reader a proxy was involved.
+  assert.match(result.brief, /渲染兜底 2/)
+  // A rendered price page is read like any other page: it becomes a source.
+  assert.ok(result.stats.pagesFetched >= 2, JSON.stringify(result.stats.pagesFetched))
+})
+
+test('a quick pricing run never renders, even when a seed is a JavaScript shell (1.1.0)', async () => {
+  const renders = []
+  const config = baseConfig()
+  config.__fetchPage = failingSeedFetcher()
+  config.__fetchRaw = renderRaw(renders)
+  const result = await runResearch({
+    question: 'DeepSeek API 现在的输入价格是多少',
+    depth: 'quick',
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.equal(result.stats.renderUsed, 0)
+  assert.equal(renders.length, 0)
+  assert.doesNotMatch(result.brief, /渲染兜底/)
+})
+
+test('a non-pricing run never renders, even when config has a raw fetcher (1.1.0)', async () => {
+  const renders = []
+  const config = baseConfig()
+  config.__fetchPage = async (url) => (String(url).includes('nodejs.org')
+    ? { url, finalUrl: url, title: url, domain: 'nodejs.org', ok: false, reason: 'HTTP 503' }
+    : fakeFetcher()(url))
+  config.__fetchRaw = renderRaw(renders)
+  const result = await runResearch({
+    question: 'Node 22 是 LTS 吗？项目该用哪个版本',
+    depth: 'standard',
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.equal(result.stats.renderUsed, 0)
+  assert.equal(renders.length, 0)
+  assert.doesNotMatch(result.brief, /渲染兜底/)
+})
+
+test('a failed render still charges the budget and keeps the original failure (1.1.0)', async () => {
+  const renders = []
+  const config = baseConfig()
+  config.__fetchPage = failingSeedFetcher()
+  config.__fetchRaw = renderRaw(renders, '')
+  const result = await runResearch({
+    question: 'DeepSeek API 现在的输入价格是多少',
+    depth: 'standard',
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  // Two renders went out (and failed), so two are charged — the cap is on
+  // requests, not on successes.
+  assert.equal(result.stats.renderUsed, 2)
+  assert.equal(renders.length, 2)
+  // The seeds are still reported as failed, with the pricing domain in the gaps.
+  assert.ok(result.stats.sourceFailures >= 4, JSON.stringify(result.stats.sourceFailures))
+  assert.ok(result.gaps.includes('官方价目页未取到：api-docs.deepseek.com'), result.gaps.join(' | '))
+})
+
+test('renderFallback:false disables the fallback entirely (1.1.0)', async () => {
+  const renders = []
+  const config = baseConfig()
+  config.renderFallback = false
+  config.__fetchPage = failingSeedFetcher()
+  config.__fetchRaw = renderRaw(renders)
+  const result = await runResearch({
+    question: 'DeepSeek API 现在的输入价格是多少',
+    depth: 'standard',
+    config,
+    llm: fakeLlm(defaultResponder),
+    selection,
+    logger: () => {},
+  })
+  assert.equal(result.stats.renderUsed, 0)
+  assert.equal(renders.length, 0)
+})
+
+test('gradeSource downgrades a rendered source by exactly one grade (1.1.0)', () => {
+  // 官方 → 论文, 仓库 → 论坛: the host claim is no longer independent of the proxy.
+  assert.equal(gradeSource(RENDER_SEED, 'render'), '论文')
+  assert.equal(gradeSource('https://github.com/owner/repo', 'render'), '论坛')
+  // A weak source stays at the floor instead of burning a second notch.
+  assert.equal(gradeSource('https://example.com/blog/post', 'render'), '网页')
+  // `jina` keeps the 1.0.x rule: only 官方/论文 step down, and they step down once.
+  assert.equal(gradeSource(RENDER_SEED, 'jina'), '论文')
+  assert.equal(gradeSource('https://github.com/owner/repo', 'jina'), '仓库')
+})
+
+test('the reference line marks a rendered source with （渲染取回） (1.1.0)', () => {
+  const brief = '## 结论\n- 一句话 [S1]'
+  const sources = [
+    { id: 'S1', url: RENDER_SEED, title: 'DeepSeek API Pricing', domain: 'api-docs.deepseek.com', via: 'render' },
+    { id: 'S2', url: 'https://nodejs.org/en/download', title: 'Node downloads', domain: 'nodejs.org', via: 'raw' },
+  ]
+  const out = appendReferences(brief, sources)
+  assert.match(out, /（论文 · api-docs\.deepseek\.com）（渲染取回）/)
+  assert.doesNotMatch(out, /nodejs\.org（[^）]*）（渲染取回）/)
+})
+
+test('the funnel line carries the render count only when it is non-zero (1.1.0)', () => {
+  const base = { identified: 5, deduped: 4, readable: 3, adopted: 1 }
+  assert.doesNotMatch(formatRetrievalFlow(base), /渲染兜底/)
+  assert.match(formatRetrievalFlow({ ...base, renderUsed: 2 }), / · 渲染兜底 2$/)
+  assert.match(formatRetrievalFlow({ ...base, renderUsed: 1 }), / · 渲染兜底 1$/)
 })

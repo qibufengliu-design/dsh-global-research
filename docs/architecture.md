@@ -11,7 +11,7 @@ research(question, depth, focus, mode, context, researchId, text, saveTo)
   ├─ 检索：付费引擎(Tavily/Brave/Serper/Exa) → ctx.web.search → DuckDuckGo HTML
   │        垂直源直连：GitHub / StackExchange / npm / PyPI / arXiv / OpenAlex / HN
   ├─ URL 直取：用户贴的 URL 与 planner 给的官方 URL 优先抓
-  ├─ 抓取分层：raw → web.fetch → Jina；EUR-Lex 走 Cellar XHTML；SO/HN 用 API 正文兜底
+  ├─ 抓取分层：raw → web.fetch → Jina；EUR-Lex 走 Cellar XHTML；价目页失败走渲染兜底（r.jina.ai）；SO/HN 用 API 正文兜底
   ├─ 证据卡 + 引用接地（原文匹配）+ 交叉验证（多域名 / 立场）
   ├─ 缺口回补（含官方 / 法规定向 query）
   ├─ 零证据选项定向回补（每个选项 1 条 `<选项> <核心词>` query，最多 3 项 / 3 页）
@@ -28,7 +28,7 @@ research(question, depth, focus, mode, context, researchId, text, saveTo)
 | `lib/strategy.js` | 问题分类 `classify()`：`questionKind` 与 `mode` 推定、价格词覆盖、信号版本 |
 | `lib/strategies.js` | 各 `questionKind` 的策略包：query 模板、来源权重、`sourcePlan.channels`、必出章节、校验规则 |
 | `lib/sources.js` | sitemap 定向爬取：探测、解析、关键词打分、路径先验、跨主机改写 |
-| `lib/fetch.js` | 正文抓取分层（raw / web / jina / cellar）、GitHub blob → raw 改写、正文抽取与字数门槛 |
+| `lib/fetch.js` | 正文抓取分层（raw / web / jina / cellar）、GitHub blob → raw 改写、正文抽取与字数门槛、pricing 渲染兜底（`createRenderFetcher`） |
 | `lib/engines.js` | 搜索源适配与失败隔离：付费引擎解析、DDG HTML 解析、challenge/4xx 自动禁用 |
 | `lib/verticals.js` | 垂直源选择与解析：按问题打分取前 2 个，API 正文兜底 |
 | `lib/brief.js` | 简报结构：必出章节、置信度、冲突三分、参考渲染、统计行 |
@@ -92,7 +92,7 @@ research(question, depth, focus, mode, context, researchId, text, saveTo)
 - GitHub `blob` 链接自动改写为 `raw.githubusercontent.com`，直接读原始 Markdown。
 - 正文不足 400 字判为「未获取」；403、PDF/二进制（`%PDF-` 头）同样记为未获取。
 - `eur-lex.europa.eu/eli/...` 正文由脚本渲染，抓取层把 CELEX/ELI 链接映射到 Cellar 的 `publications.europa.eu/resource/celex/<CELEX>` XHTML（`accept: application/xhtml+xml`），映射失败才回退普通抓取。
-- 每个取回结果带 `via`（`raw` / `web` / `jina` / `cellar`，sitemap 页面由管线覆盖为 `sitemap`），供 `gradeSource(url, via)` 决定是否降档。
+- 每个取回结果带 `via`（`raw` / `web` / `jina` / `cellar`，sitemap 页面由管线覆盖为 `sitemap`，价目页渲染兜底为 `render`），供 `gradeSource(url, via)` 决定是否降档。
 
 ## 证据分级与排序
 
@@ -121,6 +121,17 @@ research(question, depth, focus, mode, context, researchId, text, saveTo)
 - **文案在表格之后定稿**：`checkCompareRows()` 的 sink 增 `owned`（真正独立成行的候选）与 `priceTable`（表体含 `元|￥|$|百万|1M|tokens|price` 等即认，不只认列名——`输入价` 不匹配 `PRICE_COLUMN`）。`buildResult()` 在表格生成后调 `zeroEvidenceGapText(option, { hasRow, priceTable })`：有行且是价目表 → 「选项「X」在对比表中占位，但价格未取得（零证据）」；有行但不是价目表 → 「…但未取得可用证据（零证据）」；没有行 → 仍是「在本轮证据中没有可用来源（零证据），未纳入对比」。pipeline 阶段先写入的 gap 由 `realignZeroEvidenceGapText()` 就地重写，保留「（已定向检索 1 次仍未获证）」这类后缀，简报与 `gaps` 两个出口同步。
 - **价目页按 URL 直取**：`PRICING_SEEDS` 是 `{ pattern, url }` 映射（豆包/火山方舟 → `volcengine.com/docs/82379/1099320`、qwen/通义 → `help.aliyun.com/zh/model-studio/models`、deepseek → `api-docs.deepseek.com/quick_start/pricing`、kimi → `platform.moonshot.cn`、glm → `open.bigmodel.cn/pricing`），`pricingSeedFor()` 按选项取 URL。`targetedOptionRefill()` 在 pricing 场景先 `config.__fetchPage` 直取，正文命中 `hasPricingSeedText()`（`元|￥|$|/百万|1M|1000 tokens`）才作为证据页排到最前并视为该选项已解决；否则退回 `site:` 搜索。每个选项最多 1 次直取 + 1 次搜索。
 - **去重与预算**：`state.pages` / `state.refillPages` 已有的 URL 先入 `fetched` 集合，直取与搜索命中都跳过、不重复计页；本轮已经在 `sourceFailures` / `officialFetchFailures` 里失败过的 seed 不再重抓（`unreachable` 集合），避免同一轮为同一个 404 反复花预算。注意 `lib/strategies.js` 里的同名 `PRICING_SEEDS` 是给 direct 通道的 URL 列表，与这里的「选项 → 价目页」映射不是一回事。
+
+## pricing 渲染兜底（1.1.0）
+
+豆包、千问、DeepSeek 等厂商的官方价目页是 JS 壳：常规抓取（raw / web）只能拿到页头和导航，正文不足 400 字，于是价目题最该读的一页恰好读不到。1.1.0 给 pricing 通道加了一层**独立的渲染兜底**，而不是把渲染变成全局抓取路径——渲染走第三方 reader（`https://r.jina.ai/<原始URL>`，`accept: text/plain`，20s 超时），慢、贵，且内容经过二次转写，只适合「没有它就拿不到价格」的那一个页面。
+
+- **门控（全部满足才渲染）**：只给 `pricing` 通道的 seed 页与价目页定向回补；`depth` 必须是 `standard` / `deep`（quick 的页预算与墙钟容不下 20s 渲染）；`config.renderFallback !== false`；URL host 命中渲染白名单；`config.__fetchRaw` 存在。常规抓取先跑，只有失败或正文 < `MIN_USEFUL`（400 字）才进入兜底。
+- **白名单**：`DEFAULT_RENDER_HOSTS` = `volcengine.com`、`help.aliyun.com`、`api-docs.deepseek.com`、`platform.moonshot.cn`、`open.bigmodel.cn`、`bigmodel.cn`，按**主机后缀**匹配（`help.aliyun.com` 命中自身与子域，不命中 `nothelp.aliyun.com`），可用 `config.renderHosts` 覆盖。白名单只描述「已知是 JS 壳的价目页」，不是信任名单。
+- **独立预算 `RENDER_BUDGET = 2`**：一次运行最多 2 次渲染，与页预算互不占用——渲染的是同一个页面，不该再花一个页槽。预算在**请求发出前**扣（`state.renderUsed += 1`）：超时和 500 同样耗掉了这次请求，若只在成功时扣，一串坏渲染会让一次运行无限变慢。用尽后其余 seed 走常规路径，失败照旧进 `sourceFailures` / 官方价目页缺口。
+- **失败不抛**：`createRenderFetcher` 返回原抓取失败并附 `renderReason`（HTTP 码、字数不足、主机不在白名单、未配置 raw fetcher…），管线把 `renderReason` 留在失败记录上，便于解释「为什么这页仍然没读到」。
+- **降档与标记**：渲染取回的页面 `via: 'render'`，`gradeSource()` 把它**降一档**（官方 → 论文 → 仓库 → 论坛 → 百科 → 网页，最低保持「网页」）：URL 仍然是厂商官网，但经过代理转写的内容不保证与原文逐字一致，价格表可能缺列或缺币种，不能再按一手来源计。参考行在该来源后标「（渲染取回）」，`via` 随证据卡一路带到 `参考`，不进入正文断言。
+- **可见性**：`stats.renderUsed` 记录本次渲染次数，四数行（`检索流程`）在 > 0 时追加 ` · 渲染兜底 N`，不渲染的运行保持原样一行不变。
 
 ## 类别映射与清理边界（0.9.10）
 
@@ -202,6 +213,6 @@ research(question, depth, focus, mode, context, researchId, text, saveTo)
 ## 已知限制
 
 - `sitemapindex` 只跟一层，嵌套更深的站点会少抓。
-- `api` 通道仅声明不执行；`renderFallback` 未接线。
+- `api` 通道仅声明不执行；`renderFallback` 只接线到 pricing 通道（`DEFAULT_RENDER_HOSTS` 内的价目页、standard/deep 档、`RENDER_BUDGET = 2`），其他通道没有渲染兜底。
 - 不读 `robots.txt`，只做 `crawl-delay` 之外的请求间隔控制。
 - 同一项目内部 sitemap 仍是「第一个成功即停」，问题同时命中多个项目时按 tag 得分取优。

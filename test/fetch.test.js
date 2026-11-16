@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createPageFetcher, rawGithubUrl, cellarCelex } from '../lib/fetch.js'
+import { createPageFetcher, createRenderFetcher, isRenderHost, rawGithubUrl, cellarCelex } from '../lib/fetch.js'
 
 const PAGE = `<html><head><title>Node LTS schedule</title>
 <meta property="article:published_time" content="2026-01-09T10:00:00Z"></head>
@@ -187,4 +187,95 @@ test('raw mode ignores the host provider and reads GitHub blobs as raw markdown'
 test('rawGithubUrl rewrites blob links and leaves other URLs alone', () => {
   assert.equal(rawGithubUrl('https://github.com/nodejs/Release/blob/main/README.md?plain=1'), 'https://raw.githubusercontent.com/nodejs/Release/main/README.md')
   assert.equal(rawGithubUrl('https://nodejs.org/en/about'), 'https://nodejs.org/en/about')
+})
+
+// --- 1.1.0: pricing render fallback -----------------------------------------
+
+const PRICING_URL = 'https://api-docs.deepseek.com/quick_start/pricing'
+
+function renderBody(extra = '') {
+  return [
+    'Title: DeepSeek API Pricing',
+    'URL Source: https://api-docs.deepseek.com/quick_start/pricing',
+    'Published Time: 2026-10-01T00:00:00Z',
+    '',
+    'Markdown Content:',
+    `${'deepseek-chat 输入 1 元 / 百万 tokens，输出 2 元 / 百万 tokens。'.repeat(20)}${extra}`,
+  ].join('\n')
+}
+
+test('the render fetcher returns a rendered page tagged via:render', async () => {
+  const seen = []
+  const renderPage = createRenderFetcher({
+    fetchRaw: async (url, options = {}) => {
+      seen.push({ url, accept: options.headers?.accept })
+      return { status: 200, body: renderBody() }
+    },
+  })
+  const page = await renderPage(PRICING_URL, { reason: 'empty shell' })
+  assert.equal(page.ok, true)
+  assert.equal(page.via, 'render')
+  assert.equal(page.url, PRICING_URL)
+  assert.equal(page.title, 'DeepSeek API Pricing')
+  assert.equal(page.publishedAt, '2026-10-01')
+  assert.deepEqual(page.links, [])
+  assert.match(page.text, /百万 tokens/)
+  // The proxy is addressed through its URL prefix, and it is asked for plain text.
+  assert.equal(seen[0].url, `https://r.jina.ai/${PRICING_URL}`)
+  assert.equal(seen[0].accept, 'text/plain')
+})
+
+test('the render fetcher refuses hosts outside the whitelist', async () => {
+  let calls = 0
+  const renderPage = createRenderFetcher({ fetchRaw: async () => { calls += 1; return { status: 200, body: renderBody() } } })
+  const page = await renderPage('https://nodejs.org/en/about/previous-releases', { reason: 'HTTP 403' })
+  assert.equal(page.ok, false)
+  assert.equal(page.via, 'raw')
+  assert.equal(calls, 0)
+  assert.match(page.renderReason, /whitelist/)
+  // The original failure is still reported unchanged.
+  assert.equal(page.reason, 'HTTP 403')
+})
+
+test('the render fetcher honors renderFallback:false and a custom whitelist', async () => {
+  let calls = 0
+  const fetchRaw = async () => { calls += 1; return { status: 200, body: renderBody() } }
+  const disabled = createRenderFetcher({ fetchRaw, config: { renderFallback: false } })
+  assert.equal((await disabled(PRICING_URL)).ok, false)
+  assert.equal(calls, 0)
+
+  const custom = createRenderFetcher({ fetchRaw, config: { renderHosts: ['example.com'] } })
+  assert.equal((await custom(PRICING_URL)).ok, false)
+  assert.equal(calls, 0)
+  assert.equal((await custom('https://docs.example.com/pricing')).ok, true)
+  assert.equal(calls, 1)
+})
+
+test('a failed or thin render keeps the original reason and adds renderReason', async () => {
+  const fiveHundred = createRenderFetcher({ fetchRaw: async () => ({ status: 500, body: 'proxy exploded' }) })
+  const page = await fiveHundred(PRICING_URL, { reason: 'raw body under 400 chars' })
+  assert.equal(page.ok, false)
+  assert.equal(page.reason, 'raw body under 400 chars')
+  assert.match(page.renderReason, /HTTP 500/)
+
+  const thin = createRenderFetcher({ fetchRaw: async () => ({ status: 200, body: 'Title: Just the shell' }) })
+  const short = await thin(PRICING_URL)
+  assert.equal(short.ok, false)
+  assert.match(short.renderReason, /chars/)
+
+  const throws = createRenderFetcher({ fetchRaw: async () => { throw new Error('ECONNRESET') } })
+  const broken = await throws(PRICING_URL, { reason: 'HTTP 504' })
+  assert.equal(broken.ok, false)
+  assert.equal(broken.reason, 'HTTP 504')
+  assert.match(broken.renderReason, /ECONNRESET/)
+})
+
+test('isRenderHost matches host suffixes, not arbitrary substrings', () => {
+  assert.equal(isRenderHost(PRICING_URL), true)
+  assert.equal(isRenderHost('https://www.volcengine.com/docs/82379/1099320'), true)
+  assert.equal(isRenderHost('https://bigmodel.cn/pricing'), true)
+  assert.equal(isRenderHost('https://nothelp.aliyun.com/pricing'), false)
+  assert.equal(isRenderHost('https://aliyun.com.example.org/pricing'), false)
+  assert.equal(isRenderHost('not a url'), false)
+  assert.equal(isRenderHost(PRICING_URL, []), true) // empty list falls back to the default
 })
