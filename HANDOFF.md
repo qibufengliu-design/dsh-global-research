@@ -6,6 +6,8 @@
 
 **2026-11-16 01:1x 发布守门核实**：`refs/heads/main` = `06171f5`（`chore(release): 1.0.0`），tag `v1.0.0` 已推送并生成 Release id **446220562**（正文 2451 字，`node scripts/verify-release.mjs v1.0.0` 与 tag 上的 CHANGELOG 逐字一致）；三门槛 `check-docs` / `check-release` / `test-all` 全绿（19 个文件，实测 **417 例**——发布正文里写的 415 是发布那一刻的计数，之后 repo-hygiene 又加了 2 例）；CI 在 Node 20/22/24 + `windows smoke (node 22)` 上跑同一套测试，另有 CodeQL。<br>**注意**：`v1.0.0` 是**轻量 tag**（另一条线直接 `git tag` 后推送，与历史遗留的 `v0.9.2` 同类），1.0.1 起恢复「只打 annotated tag」的规矩；已推送的 tag 不移动、不删除，所以这个例外只记录不修正。
 
+**2026-11-16 02:12 巡检核实**：`refs/heads/main` = `a332c73`（`fix: 1.0.2 cost column semantics`），`package.json.version` 仍是 `1.0.0`；`CHANGELOG.md` 最上面已有 `1.0.1`/`1.0.2` 两个待发布小节但尚未打 tag，1.0.1 与 1.0.2 都还**没有** Release 页（发布守门等另一条线的发布提交）。此时 `node scripts/check-docs.mjs`、`node scripts/check-release.mjs` 在 `a332c73` 上均通过（`check-release` 只给「待发布小节」提示，不判失败）；`a332c73` 之后的下一轮守门对象是 1.0.2。
+
 ## 仓库与版本
 
 - 本地：`D:\Total\dsh-global-research`（git，`package.json.version` = `1.0.0`）
