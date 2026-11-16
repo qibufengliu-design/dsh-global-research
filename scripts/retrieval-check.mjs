@@ -34,7 +34,7 @@ import { PROFILE_PATCH, createFakeLlm, createRealHarness, resolveTavilyKey, tavi
 
 export { PROFILE_PATCH, resolveTavilyKey, tavilyKeyFromPatch }
 
-export const VERSION = '1.1.2'
+export const VERSION = '1.1.3'
 export const DEPTHS = ['auto', 'quick', 'standard', 'deep']
 // 0.8.1 — the caller normally passes `mode`, and it decides the strategy pack
 // (compare ⇒ tech-selection ⇒ official-docs channels). Without a way to pass it,
