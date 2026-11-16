@@ -12,6 +12,21 @@
 - 设计笔记归档到 `docs/design/`：0.1 以来的七篇设计稿、真实网络回归记录与仓库审计记录集中到一处，并加 [目录索引](docs/design/README.md)；根目录不再散落设计稿（另一条线先合入后再删根目录副本的那次提交把这件事做完了）。
 - `check-docs` 的文档索引检查改为递归：`docs/` 子目录里的页面必须能从根 README 或所在目录的 `README.md` 索引链到，子目录索引本身也必须从根 README 链到；`docs/design/README.md` 同时纳入链接扫描与 JSON 示例检查。
 
+## [1.1.0]
+
+> 1.1.0 的第一块是「可度量评测」：把「这次改动到底变好还是变差」从肉眼判断变成一张分数表。本版只加评测工具链（`scripts/eval.mjs`、`scripts/lib/harness.mjs` 与 `test/eval.test.js`），**不改 `package.json`（版本号仍是 1.0.2）**，也不动 `lib/` 的管线逻辑——报告格式与打分口径是本版新增的对外契约。
+
+### Added
+
+- **评测脚本（`scripts/eval.mjs`）**：固定 10 条语料（选型 / 价格 / 决策 / 时效 / 排错 / 法规 / 学习 / 论文），每条产出 `{id, kind, sources, officialRatio, tableFillRate, sectionsComplete, fourNumbers, confidence, seconds, score, notes[]}`。权重：来源质量 30、表格填充 20、段完整 15、四数 10、置信度合理性 15、时效/预算 10；不适用的指标剔除后按剩余权重归一，所以每题仍是 0–100 分，总分取均值。
+- **两种模式**：`--offline` 用内置 fixture（不联网，自检评分器与简报装配）；`--real` 走真引擎 + 真抓取，合成用确定性模板（不调 LLM），结果可复现。`--json` 落盘报告、`--only` 选题、`--baseline` 逐题对比（总分低 3 分以上退出码 1，可直接进 CI）。
+- **共享装配（`scripts/lib/harness.mjs`）**：把 `retrieval-check` 里的取 key（`tavilyKeyFromPatch` / `resolveTavilyKey`）、建 engines、建 `fetchPage` 抽成模块，评测与体检共用同一套装配；`retrieval-check.mjs` 改为从这里导入，导出与输出保持不变。
+- README 新增「评测」小节（怎么跑、权重含义、如何比较版本）；`docs/development.md` 补「评测」一节，并把 `scripts/eval.mjs` / `scripts/lib/harness.mjs` 写进目录结构。
+
+### Tests
+
+- 新增 `test/eval.test.js`：语料与权重固定、官方来源占比（仓库代码文件不算官方）、表格填充率与「缺表 / 不适用」的区别、decision 必需段缺失、四数缺失与 `adopted=0`、置信度差一档与差两档的记分、baseline 差值判定与缺题、参数解析，以及 offline 端到端（10 题都出分、表格可读、与自身比较不回归）。`node scripts/test-all.mjs` 全绿。
+
 ## [1.0.2] - 2026-11-16
 
 > 1.0.1 实跑暴露了一个判断题缺陷：对比题「Java 后端做 RAG 应用，Spring AI 和 LangChain4j 怎么选」的表头是 `| 方案 | 优势 | 风险 | 适用场景 | 成本概览 |`，两个「成本概览」格却被填成能力描述（如「Advisors API 用于拦截增强」）并带 `[S#]`——读者会把它当成成本数据。本版把「成本概览」列从「其余列」里单独拿出来：只接受含成本语义的断言，没有就写「未取得（无成本数据）」，整列都缺时表下补一行说明。**不改 `package.json`**（接口与预算模型不变）。

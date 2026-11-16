@@ -15,9 +15,11 @@ dsh-global-research/
 ├── client.js           # Web 端卡片（tool.call.toolview → research）
 ├── cordis.patch.yml     # bundle patch 声明
 ├── lib/                # 管线与算法（16 个模块，见 docs/architecture.md）
-├── test/               # 18 个测试文件，逐文件可独立运行
+├── test/               # 测试文件，逐文件可独立运行
 ├── scripts/
 │   ├── test-all.mjs        # 一条命令跑完全部测试
+│   ├── eval.mjs            # 可度量评测：固定语料 × 离线 fixture / 真引擎，出分数表
+│   ├── lib/harness.mjs     # 取 key、建 engines、建 fetchPage 的共享装配（eval 与 retrieval-check 共用）
 │   ├── retrieval-check.mjs # 只看「取到了什么源」的检索体检
 │   └── e2e-real.mjs        # 真实网络端到端（默认跳过）
 ├── docs/               # 架构、配置、开发、发布文档与截图
@@ -72,6 +74,22 @@ $env:RUN_REAL='1'; $env:TAVILY_API_KEY='tvly-...'; node scripts/e2e-real.mjs
 - `E2E_VERBOSE=1` 可看到引擎失败、证据批次与卡住的环节。
 
 回归结论记录在**仓库外的工作笔记**里（本机习惯放在 `docs/superpowers/specs/` 同级的项目笔记目录，不进仓库），发布前每个版本至少跑一次 A 题（RAG 选型）与一次 B/C 题。
+
+## 评测
+
+`scripts/eval.mjs` 用固定语料给「这次改动到底变好还是变差」出分数，权重与指标含义见 [README 的评测节](../README.md#评测)。两种模式：
+
+```powershell
+node scripts/eval.mjs --offline               # 内置 fixture：不联网，验证评分器与简报装配本身
+node scripts/eval.mjs --real --only a-rag     # 真引擎 + 真抓取 + 确定性模板合成（不调 LLM）
+node scripts/eval.mjs --real --json out.json  # 全量真跑，报告落盘
+node scripts/eval.mjs --offline --baseline prev.json
+```
+
+- `--offline` 的 fixture 在 `scripts/eval.mjs` 的 `OFFLINE_FIXTURES` 里：每个题号一组页面。两条约束来自管线本身——`heuristicEvidence()` 只取页面第一段，且对比运行里「没有任何页面提到」的选项会被整行改写成「无证据」，所以 fixture 页面与 fixture 简报的表格必须提到同一组选项名。改 fixture 时先跑 `--offline` 看每题来源数是否仍 > 0。
+- `--real` 复用 `scripts/lib/harness.mjs` 的装配（key → engines → fetchPage），合成用模板而非 LLM，所以同一版本、同一网络下结果可复现；ddg-html 被 challenge 时还能靠垂直源与 Tavily 拿到来源。
+- `--baseline` 逐题比分数并给总分差，总分低 3 分以上退出码 1，可直接进 CI。分类器与语料 `expectKind` 不一致只写进 `notes`，不影响分数——它是发现，不是失败。
+- 报告 schema 是 `{schema, tool, version, generatedAt, mode, weights, questions, total, records[]}`，跨版本对比只依赖 `records[].id` 与 `score`。
 
 ## 调试
 

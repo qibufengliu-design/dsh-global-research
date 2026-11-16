@@ -21,16 +21,18 @@
  * No network is needed for the unit tests (`test/retrieval-check.test.js`):
  * they import only the pure functions below.
  */
-import { readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { validateConfig } from '../lib/config.js'
-import { createEngines, createRawFetcher } from '../lib/engines.js'
-import { createPageFetcher } from '../lib/fetch.js'
 import { runResearch } from '../lib/pipeline.js'
 import { sourceTier } from '../lib/util.js'
+// 1.1.0 — the key lookup and the real engine/page-fetcher wiring moved into
+// scripts/lib/harness.mjs so `eval.mjs` builds them identically. They are
+// re-exported below because test/retrieval-check.test.js imports them from here
+// (and any other caller of this script expecting them should keep working).
+import { PROFILE_PATCH, createFakeLlm, createRealHarness, resolveTavilyKey, tavilyKeyFromPatch } from './lib/harness.mjs'
+
+export { PROFILE_PATCH, resolveTavilyKey, tavilyKeyFromPatch }
 
 export const VERSION = '1.0.2'
 export const DEPTHS = ['auto', 'quick', 'standard', 'deep']
@@ -39,8 +41,6 @@ export const DEPTHS = ['auto', 'quick', 'standard', 'deep']
 // a script run always landed on the concept pack and could never exercise the
 // official-query path the real reports come from.
 export const MODES = ['explain', 'compare', 'track', 'evaluate']
-/** DSH's desktop profile patch; the plugin's own keys live in its `config.keys`. */
-export const PROFILE_PATCH = join(process.env.USERPROFILE ?? homedir(), '.dsh', 'profiles', 'desktop', 'cordis.patch.yml')
 
 /** Fixed brief for the fake model: cites up to S10 so 采用 tracks the selected pages. */
 const SYNTH_BRIEF = [
@@ -87,57 +87,7 @@ export function fakeReply(prompt, question = '') {
  * `stream()`; there is no `call(prompt)` entry point in the pipeline.
  */
 export function fakeLlm(question) {
-  return {
-    stream(options) {
-      const prompt = options?.messages?.[0]?.content?.[0]?.text ?? ''
-      const reply = fakeReply(prompt, question)
-      return (async function* emit() {
-        yield { type: 'text-delta', text: reply }
-        yield { type: 'finish', reason: { kind: 'stop' } }
-      })()
-    },
-  }
-}
-
-/**
- * Pull the tavily key out of the profile patch's `keys:` block.
- *
- * The live profile writes `keys:\n  tavily: tvly-...` (unquoted), so both
- * quoted and bare values are accepted; `tavily: true` under `engines:` is not
- * in a `keys:` block and is therefore never mistaken for a key.
- */
-export function tavilyKeyFromPatch(text) {
-  const lines = String(text ?? '').split(/\r?\n/)
-  for (let index = 0; index < lines.length; index += 1) {
-    const head = /^(\s*)keys:\s*(.*)$/.exec(lines[index])
-    if (!head) continue
-    const inline = /tavily:\s*(?:"([^"]+)"|'([^']+)'|([^\s#"']+))/.exec(head[2] ?? '')
-    if (inline) return (inline[1] ?? inline[2] ?? inline[3]).trim() || undefined
-    const indent = head[1].length
-    for (let next = index + 1; next < lines.length; next += 1) {
-      const line = lines[next]
-      if (!line.trim() || /^\s*#/.test(line)) continue
-      const lineIndent = /^(\s*)/.exec(line)[1].length
-      if (lineIndent <= indent) break
-      const match = /^\s*tavily:\s*(?:"([^"]+)"|'([^']+)'|([^\s#]+))/.exec(line)
-      if (match) return (match[1] ?? match[2] ?? match[3]).trim() || undefined
-    }
-  }
-  return undefined
-}
-
-/** `TAVILY_API_KEY` first, then the desktop profile's `keys.tavily`. Never prints the key. */
-export function resolveTavilyKey({ env = process.env, patchPath = PROFILE_PATCH, readFile = readFileSync } = {}) {
-  const fromEnv = String(env.TAVILY_API_KEY ?? '').trim()
-  if (fromEnv) return { key: fromEnv, source: 'env' }
-  try {
-    const text = readFile(patchPath, 'utf8')
-    const key = tavilyKeyFromPatch(text)
-    if (key) return { key, source: 'profile' }
-  } catch {
-    // No profile patch on this machine: ddg-html alone has to carry the run.
-  }
-  return { key: undefined, source: 'missing' }
+  return createFakeLlm((prompt) => fakeReply(prompt, question))
 }
 
 /**
@@ -256,22 +206,8 @@ async function main(argv = process.argv.slice(2)) {
   // Real config normalisation, real engines, real page fetcher: only the model
   // and the host's ctx.web are replaced. No `web` means ctx-web stays out and
   // retrieval is exactly what a machine without a host search tool would see.
-  const { config } = validateConfig({
-    enabled: true,
-    pageFetcher: 'raw',
-    keys: tkey.key ? { tavily: tkey.key } : {},
-    engines: {
-      ctxWeb: false,
-      ddgHtml: true,
-      tavily: Boolean(tkey.key),
-      brave: false,
-      serper: false,
-      exa: false,
-    },
-  })
-  const fetchRaw = createRawFetcher()
-  const engines = createEngines({ config, web: null, fetchRaw })
-  const fetchPage = createPageFetcher({ config, fetchRaw, logger: console.error })
+  // createRealHarness() is shared with scripts/eval.mjs --real (1.1.0).
+  const { config, fetchRaw, engines, fetchPage } = createRealHarness({ tavilyKey: tkey.key, logger: console.error })
   if (engines.length === 0) {
     console.error('[retrieval-check] 没有可用引擎：至少保留 ddg-html，或配置 tavily key。')
     return 1

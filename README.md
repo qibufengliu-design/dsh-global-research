@@ -107,6 +107,32 @@ plugin_manager set_plugin target: include:global-research enabled: true
 
 超出预算或时间返回 `partial: true`，并在「未解决」写明剩余问题，不编造。同一 agent 在进程内最多 5 次 `deep`，超出自动降为 `standard`。
 
+## 评测
+
+`scripts/eval.mjs` 把「这次改动到底变好还是变差」压成一张分数表：固定 10 条语料（选型、价格、决策、时效、排错、法规、学习、论文），每题 0–100 分，总分取均值，可跨版本对比。
+
+```powershell
+node scripts/eval.mjs --offline                        # 不联网：内置 fixture 跑 10 题，自检评分器本身（秒级，适合 CI 冒烟）
+node scripts/eval.mjs --real --only a-rag              # 真引擎 + 真抓取 + 确定性模板合成（不调 LLM），只跑一题
+node scripts/eval.mjs --real --json out.json           # 全量真跑并把报告落盘
+node scripts/eval.mjs --offline --baseline prev.json   # 与旧报告逐题对比，总分低 3 分以上退出码 1
+```
+
+指标与权重：
+
+| 指标 | 权重 | 看什么 |
+|---|---|---|
+| 来源质量 | 30 | 官方/文档页占比（`doc-page` / `doc-index` / `repo-doc` 或官方域名；仓库里的代码文件不算官方） |
+| 表格填充 | 20 | 有对比表时，评估格里不是「无证据」的比例；该题不需要对比表则不计入 |
+| 段完整 | 15 | `## 结论/依据/置信度/未解决` 齐，且题类必需段齐（decision 还要「## 判据」；compare / 选型 / 学习 / 决策要「## 行动清单」） |
+| 四数 | 10 | 识别 / 去重 / 可读 / 采用 四个数字齐全且采用 > 0 |
+| 置信度合理性 | 15 | 与官方占比、来源数匹配：证据薄却报高、证据足却报低都扣分（差一档计 0.5，差两档计 0.15） |
+| 时效/预算 | 10 | 没超档位墙钟、且不是 `partial` |
+
+不适用的指标（例如非对比题没有对比表）会被剔除，再按剩余权重归一，所以每题仍是 0–100 分。每题都带 `notes`：扣分原因、以及分类器结果与语料 `expectKind` 不一致（只提示，不影响分数）都写在里面。
+
+退出码：`0` 正常；`1` 比 baseline 低 3 分以上（或运行失败）；`2` 参数错误。`--json` 落盘的报告含 `schema`、`weights`、`total` 与逐题 `records`，可以直接作为 CI 产物比较。
+
 ## 配置
 
 配置写在 profile 的 `cordis.patch.yml` 里，由 `lib/config.js` 校验：类型强转、越界夹取、未知键与非法枚举记 warning 后回退默认值——写错配置不会让工具崩掉。
@@ -191,6 +217,7 @@ Web 端不再是通用工具行，而是一张卡片：置信度徽章（高/中
 ```powershell
 node scripts/test-all.mjs       # 逐文件跑全部测试（沙箱里 node --test test/ 会 spawn EPERM）
 node --check index.js client.js
+node scripts/eval.mjs --offline # 评测语料 × 内置 fixture：评分器自检，秒级出分（见「评测」）
 node scripts/check-docs.mjs     # 仓库整洁性：必需文件、相对链接、CHANGELOG、零依赖、Issue 表单、README 参数表与工具参数一致、JSON 示例可解析、文档里的脚本命令真实存在、没有密钥或本机绝对路径、docs 都能从 README 链到、workflow 结构完整
 node scripts/check-release.mjs  # 发布一致性：版本号、CHANGELOG 小节（非空、不重复、从新到旧、不比版本号旧）、retrieval-check 的 VERSION、预算表与代码一致
 ```
