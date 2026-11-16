@@ -14,7 +14,7 @@
 
 ## [1.1.0]
 
-> 1.1.0 的第一块是「可度量评测」：把「这次改动到底变好还是变差」从肉眼判断变成一张分数表。本版只加评测工具链（`scripts/eval.mjs`、`scripts/lib/harness.mjs` 与 `test/eval.test.js`），**不改 `package.json`（版本号仍是 1.0.2）**，也不动 `lib/` 的管线逻辑——报告格式与打分口径是本版新增的对外契约。
+> 1.1.0 是三块「从可信走向可验证」的收口：① 可度量评测——把「这次改动到底变好还是变差」从肉眼判断变成一张分数表（`scripts/eval.mjs`、`scripts/lib/harness.mjs`、`test/eval.test.js`）；② 判据校验——decision 题的「## 判据」每条必须给出数字阈值或比较词，否则补「（推断）」并在过半时降一档置信度；③ pricing 渲染兜底——JS 壳价目页走独立的 Jina 渲染预算取回，并按 `via: 'render'` 降档。版本号从 1.0.2 升到 1.1.0；管线只在 pricing 通道增加了渲染兜底一层，既有接口、简报结构、置信度口径与预算模型不变。
 
 ### Added
 
@@ -23,11 +23,22 @@
 - **共享装配（`scripts/lib/harness.mjs`）**：把 `retrieval-check` 里的取 key（`tavilyKeyFromPatch` / `resolveTavilyKey`）、建 engines、建 `fetchPage` 抽成模块，评测与体检共用同一套装配；`retrieval-check.mjs` 改为从这里导入，导出与输出保持不变。
 - README 新增「评测」小节（怎么跑、权重含义、如何比较版本）；`docs/development.md` 补「评测」一节，并把 `scripts/eval.mjs` / `scripts/lib/harness.mjs` 写进目录结构。
 - **判据校验（`lib/brief.js` `validateCriteria()`）**：decision 题的「## 判据」不再只查段是否存在。逐条 `- ` 行必须给出数字或比较/阈值词（`≥ ≤ > < 超过 至少 以上 以内` 等，中文数字带单位也认），否则补「（推断）」并计为软行；软行超过一半且置信度是 `high` / `medium` 时降一档（high→medium、medium→low），「## 置信度」同步改写，并在「未解决」追加 `- 判据偏软：N/M 条缺少可量化阈值，结论按证据强度下调`（幂等）。没有「## 判据」的简报原样返回；`buildResult()` 的返回对象给出降档后的 `confidence`。
+- **pricing 渲染兜底（`lib/fetch.js` `createRenderFetcher()` + `lib/pipeline.js`）**：厂商的官方价目页多是 JS 壳（常规抓取只拿到页头和导航、正文不足 400 字），价目题最该读的一页恰好读不到。新增独立的渲染兜底：走 `https://r.jina.ai/<原始URL>`（`accept: text/plain`，20s 超时）取正文，只在 `pricing` 通道、`standard`/`deep` 档、主机命中渲染白名单、常规抓取失败或正文 < `MIN_USEFUL_CHARS`（400 字）时才触发，`config.renderFallback === false` 可整层关闭。
+- **渲染白名单与预算**：`DEFAULT_RENDER_HOSTS` = `volcengine.com` / `help.aliyun.com` / `api-docs.deepseek.com` / `platform.moonshot.cn` / `open.bigmodel.cn` / `bigmodel.cn`（按主机后缀匹配），`config.renderHosts` 可覆盖；`RENDER_BUDGET = 2` 与页预算互相独立、在请求发出前扣减（超时和 500 同样计数），失败不抛错，原因写进 `renderReason` 与 `sourceFailures`。
+- **渲染页降档**：`via: 'render'` 的页面由 `gradeSource()` 降一档（官方 → 论文 → 仓库 → 论坛 → 百科 → 网页，最低「网页」），参考行标「（渲染取回）」；`stats.renderUsed` 与流程行 ` · 渲染兜底 N` 可核对本次是否用了渲染。
+- `docs/architecture.md` 新增「pricing 渲染兜底（1.1.0）」一节（门控、白名单、独立预算、失败原因、降档与可见性），`docs/configuration.md` 补 `renderFallback` / `renderHosts`。
+
+### 仓库
+
+- `scripts/check-docs.mjs` 的必需文件表增加 `scripts/eval.mjs` 与 `scripts/lib/harness.mjs`：评测工具链是 1.1.0 起的对外契约，被删或改名要立刻在整洁性检查里报出来。
+- docs 索引检查改为递归并索引感知：`docs/**/*.md` 必须能从根 README 或其所在目录的 `README.md` 索引导航到，子目录索引本身必须从根 README 链到（应用在没有索引的情况下归档 `docs/design/` 的那次整理上，首跑当场抓出缺失链接）。
 
 ### Tests
 
 - 新增 `test/eval.test.js`：语料与权重固定、官方来源占比（仓库代码文件不算官方）、表格填充率与「缺表 / 不适用」的区别、decision 必需段缺失、四数缺失与 `adopted=0`、置信度差一档与差两档的记分、baseline 差值判定与缺题、参数解析，以及 offline 端到端（10 题都出分、表格可读、与自身比较不回归）。`node scripts/test-all.mjs` 全绿。
 - 新增判据校验用例：全部命中阈值不降档、过半软行补「（推断）」并降一档且改写「## 置信度」、已有标记不重复、引用行不叠标记、`- 无` 不计分母、无判据段原样返回、幂等，以及 `buildResult()` 端到端返回降档后的置信度。
+- 新增渲染兜底用例（`test/fetch.test.js` / `test/pipeline.test.js`）：白名单后缀匹配与 `nothelp.aliyun.com` 反例、正文不足 400 字才走渲染、`renderFallback: false` 整层关闭、预算在请求前扣减、超时/500 不抛错只记原因、`via: 'render'` 降一档、流程行出现 ` · 渲染兜底 N`。
+- 全量：`node scripts/test-all.mjs` → **20 个测试文件、458 例全绿**（2026-11-16 发布守门实测；1.0.2 时为 19 文件 426 例）。
 
 ## [1.0.2] - 2026-11-16
 
