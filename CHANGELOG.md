@@ -7,6 +7,45 @@
 
 ## [Unreleased]
 
+## [1.1.3]
+
+> 1.1.3 补第十个问题类别 `scholar`：arXiv / OpenAlex 两个 vertical 早已实现，但**没有专门的 questionKind 去优先走论文通道**，论文题（「近年论文」「benchmark 综述」「papers about X」）一律落进 `concept` / `learning`，简报按通用结构写，还硬塞 `## 方案对比` 与 `## 行动清单` 两段。同时修掉评测语料里一处错位期望：`scripts/eval.mjs` 的 `i-paper` 期望 `expectKind: 'research'`，而分类器从来没有这个类别，`--offline` 每次都打「分类器没有 kind「research」…跳过断言」，i-paper 的分类断言从 1.1.0 起就没生效过。
+
+### Added
+
+- **新类别 `scholar`（`lib/strategies.js`、`lib/strategy.js`）**：`QUESTION_KINDS` 增加 `scholar`，`SIGNAL_VERSION` 4 → 5（分类缓存指纹随之失效）。信号分两档——强档 `SCHOLAR_HINTS`（`论文|文献|综述|研究现状|实证研究|实验数据|paper|papers|literature|survey|arxiv|doi|acm|ieee|citation|meta-analysis|benchmark`）权重 5，命中即过 2 分接受线；辅助档 `SCHOLAR_CONTEXT_HINTS`（`近年|最新进展|基线|对比实验|数据集|方法|评估`）权重 1，只做加权、单独永远不足以命名类别（「近年 方法 评估 数据集」仍是 `concept`）。
+- **优先级插在 `legal` 之后、`fresh-data` 之前（`KIND_PRIORITY`）**：`legal > scholar > troubleshoot > contested > fresh-data > pricing > decision > tech-selection > learning > concept`。学术题常带「近年」，排在 `fresh-data` 后面会被时效信号抢走；`legal` 仍最优先（「IEEE 802.11 标准的合规义务」scholar 5 分也输给 legal 6 分）。
+- **策略包**：`sourcePlan.channels` 只声明论文通道 `{ id: 'papers', method: 'api', hosts: ['arxiv.org','openalex.org','doi.org'], maxPages: 2 }`；`extraTemplates` 为 `{q} survey` / `{q} arxiv` / `{q} benchmark results` / `{q} 综述`；`depth.bias` 与 `tech-selection` 同为 0；`mode` 缺省 `explain`（文献题不是选型题）；`brief.requiredSections` 只要 `## 依据` + `## 未解决`，不强制对比表/行动清单。包内不写 `verticals.prefer`——`VERTICAL_DOMAINS` 里 `scholar` 映射的是 `scholar.google.com`，而 OpenAlex 适配器走 `openalex.org`/`doi.org`，写 prefer 只会加权到错的域名。
+- **论文库同时入选（`lib/verticals.js`）**：`SCHOLAR_HINTS` 命中时 `arxiv` 与 `scholar` 都给 4 分，并把 `github` 压到 ≤2，`limit = 2` 的 top-2 就是 `['arxiv','scholar']`；修掉了「学术题同时命中 `DEV_HINTS`（框架/接口）时 github 3 分平 arxiv 3 分、靠对象键序把 arxiv 挤出 top-2」的旧行为。非学术题的 `github`+`docs` / `github`+`stackexchange` 组合逐字不变。
+- **学术型输出结构（`lib/prompts.js` 的 `synthPrompt()`）**：`questionKind === 'scholar'` 时改用 `## 结论`（研究现状一句话）→ `## 主要工作`（3–5 条，每条带年份 + 作者或 arXiv id）→ `## 证据强度`（样本规模 / 实验设置 / 是否同行评审）→ `## 未解决`；硬规则收口：预印本（arXiv / bioRxiv / SSRN）不得写成「已被证明 / 已达成共识 / 学界公认」，没有 DOI 或无法确认出处的条目句末标「（未核实）」。kind 优先于 mode（与 decision 同款先例），`mode: 'compare'` 也不会退回对比结构；表格行列规则对该类不再输出（只保留 3500 字上限）。
+
+### Fixed
+
+- **评测语料错位期望（`scripts/eval.mjs`）**：`i-paper` 的 `expectKind` 由 `'research'` 改为 `'scholar'`。该题「RAG 长上下文检索的近年论文」现在真的判成 `scholar`（0.9），「跳过断言」提示消失，分类断言开始生效。`expectedConfidence` 等其余字段不受影响。
+
+判定表（同一批问题分别走 1.1.2 / 1.1.3 分类器）：
+
+| 问题 | 1.1.2 | 1.1.3 | 说明 |
+| --- | --- | --- | --- |
+| RAG 长上下文检索的近年论文 | concept | **scholar**（0.9） | 强档 5 分 + 辅助档 1 分 |
+| 长上下文检索的 benchmark 数据集综述 | tech-selection | **scholar**（0.9） | 6 : 3，scholar 胜 |
+| Node.js 最新 LTS 支持到什么时候 | fresh-data | fresh-data（0.7） | scholar 0 分，不抢占时效题 |
+| 如何学习 Java | learning | learning（0.7） | scholar 0 分，不误判学习题 |
+| IEEE 802.11 标准的合规义务 | legal | legal（0.9） | scholar 5 分仍输给 legal 6 分 |
+
+### 评测
+
+- `--offline`：总分 **88.1**（与 1.1.2 持平，改动集中在分类与段落结构，不动评分权重）；`i-paper` 行的 kind 由 `—` 变成 `scholar`，官方占比 0% / 置信度 `low` 如实显示（3 条 fixture 来源是 arXiv 与 ACL，没有官方域名）。备注从 3 条降到 **2 条**，剩下的 `e-so`（判成 `concept`，期望 `troubleshoot`）与 `g-learn`（判成 `concept`，期望 `learning`）是既有分类提示，与本次无关——「分类器没有 kind「research」」那条已消失。
+
+### Tests
+
+- 新增 `test/scholar.test.js`（12 例）：注册表（`SIGNAL_VERSION === 5`、`QUESTION_KINDS` 含 scholar、`KIND_PRIORITY` 里 legal < scholar < fresh-data/troubleshoot/tech-selection/learning/concept）；强档命中（中文论文题 / benchmark 综述 / `papers about …` / IEEE meta-analysis 四例都判 `scholar`、`source === 'regex'`、`signals` 含 `kw:scholar`、5 分给 0.9）；辅助档单独不够（「近年 方法 评估 数据集」scholar 1 分、仍 `concept`）；不抢占 `fresh-data`（「Node.js 最新 LTS…」scholar 0 分、「React 最新版本…近年…」scholar 1 分但仍是 `fresh-data`）；不误判「如何学习 Java」；legal 优先；pack 形状（论文通道 hosts、4 条模板、bias 0、explain、必需段、官方种子为空）；必需段只有 `## 依据` + `## 未解决`（无对比表/行动清单/判据）；缺段降一档（`missingSections` → `medium`）；papers 通道选中 `['arxiv','scholar']` 且 github 不在其中（含「RAG 检索框架的 benchmark 论文有哪些」这种同时命中 `DEV_HINTS` 的题），非学术题组合不变；提示词结构（学术型四段 + 预印本/（未核实）禁令、无「输出结构（对比型）」/`## 方案对比`/`## 行动清单`、`concept` 保持原样）；`i-paper` 期望 `scholar` 且该题真的分类成 `scholar`（防「期望值不可达又被静默跳过」重演）。
+- 全量：`node scripts/test-all.mjs` → **21 个测试文件、479 例全绿**；`node scripts/check-docs.mjs` 全绿。
+
+### 文档
+
+- `docs/architecture.md` 新增「scholar 类别（1.1.3）」一节（信号两档、优先级位置、策略包、论文库同时入选、学术型输出结构、评测语料，附 5 行判定表），并在「decision 类别（0.10.0）」的 `SIGNAL_VERSION` / `KIND_PRIORITY` 说明里标出 1.1.3 的变化。
+
 ## [1.1.2]
 
 > 1.1.2 修「置信度与证据强度不对齐」：1.1.1 实跑里 a-rag（官方占比 90%、采用 8 条）与 b-price（官方占比 100%、采用 8 条）都报 `low`，而评测判据给出 `high`；用户侧的感受一致——官方来源占绝对多数的简报，读起来比证据弱。

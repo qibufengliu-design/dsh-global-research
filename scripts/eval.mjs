@@ -74,7 +74,7 @@ export const QUESTIONS = Object.freeze([
   Object.freeze({ id: 'f-legal', question: '欧盟网络弹性法案（CRA）对嵌入式设备厂商有哪些义务', depth: 'standard', mode: '', expectKind: 'legal' }),
   Object.freeze({ id: 'g-learn', question: '如何系统学习 Java 后端开发', depth: 'quick', mode: '', expectKind: 'learning' }),
   Object.freeze({ id: 'h-compare-zh', question: 'MySQL 和 PostgreSQL 选哪个', depth: 'standard', mode: '', expectKind: 'tech-selection' }),
-  Object.freeze({ id: 'i-paper', question: 'RAG 长上下文检索的近年论文', depth: 'quick', mode: '', expectKind: 'research' }),
+  Object.freeze({ id: 'i-paper', question: 'RAG 长上下文检索的近年论文', depth: 'quick', mode: '', expectKind: 'scholar' }),
   Object.freeze({ id: 'j-eval', question: '8 人团队要不要上 Kubernetes', depth: 'standard', mode: '', expectKind: 'decision' }),
 ])
 

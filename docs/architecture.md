@@ -105,6 +105,27 @@ research(question, depth, focus, mode, context, researchId, text, saveTo)
 - 页面兜底：模型只引用了部分页面时，没被引用的页面各补一条启发式证据（官方/通道页段落门槛 60 字符，其余 120 字符），避免「读到了却没采用」。
 - 证据抽取并行：按 2 页一批（`EVIDENCE_CONCURRENCY = 2`）同时抽，单批失败（典型是双批并发下的 provider 429）记日志后回落逐页启发式；结果按批序合并，`[S#]` 编号与「参考」顺序与串行完全一致（0.9.5）。
 
+## scholar 类别（1.1.3）
+
+1.1.2 之后，`scripts/eval.mjs` 的 `i-paper`（「RAG 长上下文检索的近年论文」）仍然报「分类器没有 kind「research」」，因为语料里的期望 `expectKind` 写成了一个不存在的类别；同时 arXiv / OpenAlex 两个 vertical 虽然早在 `lib/verticals.js` 里实现，却没有专门的 questionKind 去优先走论文通道——论文题落进 `concept` / `learning`，简报按通用结构写，`## 方案对比` 与 `## 行动清单` 两段正是文献题最不需要的东西。1.1.3 补上第十个类别 `scholar`。
+
+- **信号分两档**（`lib/strategy.js`）：强档 `SCHOLAR_HINTS` 命中即命名类别、权重 5（`论文|文献|综述|研究现状|实证研究|实验数据|paper|papers|literature|survey|arxiv|doi|acm|ieee|citation|meta-analysis|benchmark`）；辅助档 `SCHOLAR_CONTEXT_HINTS` 权重 1（`近年|最新进展|基线|对比实验|数据集|方法|评估`），单独出现不够格——`best.score >= 2` 的门槛因此把「近年 方法 评估 数据集」留在 `concept`。
+- **优先级插在 legal 之后、fresh-data 之前**：学术题常带「近年」，如果排在 `fresh-data` 后面会被时效信号抢走；`KIND_PRIORITY` 是 `legal > scholar > troubleshoot > contested > fresh-data > pricing > decision > tech-selection > learning > concept`。`SIGNAL_VERSION` 4 → 5，缓存的分类指纹随之失效。
+- **策略包**（`lib/strategies.js`）：`sourcePlan.channels` 只声明论文通道 `{ id: 'papers', method: 'api', hosts: ['arxiv.org','openalex.org','doi.org'], maxPages: 2 }`；`extraTemplates` 是 `{q} survey` / `{q} arxiv` / `{q} benchmark results` / `{q} 综述`；`depth.bias` 与 `tech-selection` 同为 0；`mode` 缺省 `explain`（文献题不是选型题）；`brief.requiredSections` 只要 `## 依据` + `## 未解决`，不强制对比表/行动清单。`method: 'api'` 的通道与 `contested` 的论文通道一样是声明性的（Step 2a 只调度 `sitemap`、Step 2b 只调度 `direct`），真正把论文库拉进来的是下面这条 vertical 规则。
+- **论文库同时入选**（`lib/verticals.js`）：`SCHOLAR_HINTS` 命中时 `arxiv` 与 `scholar` 都给 4 分，并把 `github` 压到 ≤2，所以 `limit = 2` 的 top-2 是 `['arxiv','scholar']`，不会再被命中 `DEV_HINTS` 的「框架/接口」把 arxiv 挤掉。非学术题的 `github`+`docs` / `github`+`stackexchange` 组合保持不变。
+- **学术型输出结构**（`lib/prompts.js`）：`synthPrompt()` 按 `questionKind === 'scholar'` 切到 `## 结论`（研究现状一句话）→ `## 主要工作`（3–5 条，每条带年份 + 作者或 arXiv id）→ `## 证据强度`（样本规模 / 实验设置 / 是否同行评审）→ `## 未解决`，并用一条硬规则收口：预印本不得写成「已被证明 / 已达成共识」，没有 DOI 的条目句末标「（未核实）」。kind 优先于 mode（与 decision 同款先例），所以即使 `mode: 'compare'` 也不会退回对比结构；表格行列规则对该类不再输出。
+- **评测语料**：`i-paper` 的 `expectKind` 从 `'research'` 改成 `'scholar'`，`--offline` 里那条「跳过断言」的提示消失，`i-paper` 的分类断言真正开始生效（`--offline` 88.1 分不变，`i-paper` 行 kind 由 `—` 变为 `scholar`）。
+
+判定表（同一批问题分别走 1.1.2 / 1.1.3 分类器）：
+
+| 问题 | 1.1.2 | 1.1.3 | 说明 |
+| --- | --- | --- | --- |
+| RAG 长上下文检索的近年论文 | concept | **scholar**（0.9） | 强档 5 分 + 辅助档 1 分 |
+| 长上下文检索的 benchmark 数据集综述 | tech-selection | **scholar**（0.9） | 6 : 3，scholar 胜 |
+| Node.js 最新 LTS 支持到什么时候 | fresh-data | fresh-data（0.7） | scholar 0 分，不抢占时效题 |
+| 如何学习 Java | learning | learning（0.7） | scholar 0 分，不误判学习题 |
+| IEEE 802.11 标准的合规义务 | legal | legal（0.9） | scholar 5 分仍输给 legal 6，legal 最优先 |
+
 ## 置信度对齐（1.1.2）
 
 1.1.1 的实跑里，a-rag（官方占比 90%、采用 8 条）与 b-price（官方占比 100%、采用 8 条）都报 `low`，而 `scripts/eval.mjs` 的 `expectedConfidence()` 判 `high`；用户看到的简报也比证据弱。归因结果是三处结构问题叠加，不是阈值偏紧——所以 1.1.2 **没有改任何阈值**，`expectedConfidence()` 的判定式（`high` = 占比 ≥50% 且采用 ≥5；`low` = 占比 <40% 或采用 <2；其余 `medium`）逐字保留。
@@ -188,8 +209,8 @@ research(question, depth, focus, mode, context, researchId, text, saveTo)
 
 0.9.10 的 C 题（「我们团队 8 个人，微服务该不该拆」）是全 0 分回落 `concept`，靠措辞升级拿到 cost 列——表列对了，问题类别还是错的：提示词没要求给判断，检索也没往阈值/反例上找。0.10.0 把「该不该 / 要不要 / 值不值得」做成真类别。
 
-- **信号分两档**（`lib/strategy.js`，`SIGNAL_VERSION` 4）：强档 `DECISION_HINTS`（`该不该` / `要不要` / `值不值得` / `是否该` / `应不应该` / `需不需要` / `是否应该` / `值得吗` / `该拆` / `该上` / `该迁` / `要不要拆` / `要不要上` / `该不该用` / `值不值得用`）权重 5，命中即过 2 分接受线；辅助档 `DECISION_CONTEXT_HINTS`（`团队` / `多少人` / `规模` / `预算` / `成本` / `风险` / `权衡` / `取舍`）权重 1，只做加权、单独永远不足以命名类别（`团队规模多大` 仍是别的类别）。
-- **固定优先级**（`KIND_PRIORITY`）：`legal → troubleshoot → contested → fresh-data → pricing → decision → tech-selection → learning → concept`。`decision` 排在 `pricing` 之后：带价的问题由价目页决定，`该不该买 X，多少钱` 仍是 `pricing`（价格覆盖逻辑不变）。排在 `tech-selection` 之前：`该不该用 React` 只有一个选项，是二选一判断而不是选型（选型表要求每个候选独立一行，单候选会退化成一行表的假对比）；**只有真正并列比较（`A 还是 B 哪个好`）才是 `tech-selection`**，这类问法里没有 `该不该`/`要不要`，两套词表不相交。同分时按 `KIND_PRIORITY` 的先后决定（`rankScores()`）。
+- **信号分两档**（`lib/strategy.js`，`SIGNAL_VERSION` 4，1.1.3 起为 5）：强档 `DECISION_HINTS`（`该不该` / `要不要` / `值不值得` / `是否该` / `应不应该` / `需不需要` / `是否应该` / `值得吗` / `该拆` / `该上` / `该迁` / `要不要拆` / `要不要上` / `该不该用` / `值不值得用`）权重 5，命中即过 2 分接受线；辅助档 `DECISION_CONTEXT_HINTS`（`团队` / `多少人` / `规模` / `预算` / `成本` / `风险` / `权衡` / `取舍`）权重 1，只做加权、单独永远不足以命名类别（`团队规模多大` 仍是别的类别）。
+- **固定优先级**（`KIND_PRIORITY`）：`legal → scholar → troubleshoot → contested → fresh-data → pricing → decision → tech-selection → learning → concept`（`scholar` 是 1.1.3 加的，见「scholar 类别（1.1.3）」一节）。`decision` 排在 `pricing` 之后：带价的问题由价目页决定，`该不该买 X，多少钱` 仍是 `pricing`（价格覆盖逻辑不变）。排在 `tech-selection` 之前：`该不该用 React` 只有一个选项，是二选一判断而不是选型（选型表要求每个候选独立一行，单候选会退化成一行表的假对比）；**只有真正并列比较（`A 还是 B 哪个好`）才是 `tech-selection`**，这类问法里没有 `该不该`/`要不要`，两套词表不相交。同分时按 `KIND_PRIORITY` 的先后决定（`rankScores()`）。
 - **策略包**（`lib/strategies.js`）：`queries.extraTemplates` = `{q} 何时该拆 微服务` / `{q} 团队规模 阈值` / `{q} 反例 失败` / `{q} trade-offs`（沿用 `{q}` / `{year}` 语法，定向 query 排在计划最前）；`sourcePlan.channels: []` 是显式声明——判断依据来自原则与经验，不硬绑官方文档通道，也避免把决策题拖进文档爬取；`depth.bias` 与 `concept` 同档（0），不额外加深；`mode` 缺省 `explain`。
 - **提示词**（`lib/prompts.js`）：`synthPrompt({ questionKind: 'decision' })` 换成「决策型」输出结构，且优先于 `mode`（对比模式也不能把它变回对比结构）：① 「## 结论」第一行必须二选一写「该」或「不该」，允许「在 X 条件下该、在 Y 条件下不该」但必须落到一个主判断，不许用「取决于」代替判断；② 「## 判据」列可量化阈值（团队人数、发布频率、故障定位时长、回滚成本…），一条一行写成「阈值 + 为什么是这条线」，没来源的标「（推断）」；③ 反例：什么情况下判断会反过来；④ 行动清单，每条可直接执行。对比表列仍走 cost 桶。
 - **判据接地**（`lib/brief.js` `groundCriteria(brief, sources)`，0.10.1）：「## 判据」的每一行 `- ` 若既不带 `[S#]`、也没自己写「（推断）/（无来源）」，交付前在行尾补「（推断）」——提示词只是提示，模型照样会写「每周发布 ≥ 3 次 → 进入拆分评估」而不标来源，这些阈值多半是二手页面转述的经验值。段不存在不动、`- 无` 占位不算判据、幂等；`[S#]` 只有出现在 `sources` 表里才算接地（否则编号会被 `validateCitations()` 删掉，成了假引用）。它在 `buildResult()` 里排在 `ensureSections()` 之后、清理层之前，下游看到的就是接地后的文本。
