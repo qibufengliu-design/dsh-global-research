@@ -1,8 +1,8 @@
-# 交接：全球深度研究插件（1.1.0）
+# 交接：全球深度研究插件（1.1.1）
 
 ## 一句话状态
 
-`research` 工具已达 1.1（当前 `1.1.0`）：把一个开放问题做成**带 `[S#]` 引用、可核查、可复跑**的研究简报，零第三方依赖。0.6 → 1.0 的能力线已收口（策略引擎与取源通道、证据分级与排序、答案层、运维自检），1.1.0 在此基础上补了三块「可验证」：**可度量评测**（`scripts/eval.mjs` 固定 10 题分数表，可跨版本对比）、**判据校验**（`## 判据` 每条要有数字阈值，否则标「（推断）」并降档）、**pricing 渲染兜底**（JS 壳价目页走独立的 Jina 渲染预算取回，按 `via: 'render'` 降档）。接口、简报结构、置信度口径、预算模型仍然冻结；做不到的部分集中写在 [LIMITATIONS.md](LIMITATIONS.md)。
+`research` 工具已达 1.1（当前 `1.1.1`）：把一个开放问题做成**带 `[S#]` 引用、可核查、可复跑**的研究简报，零第三方依赖。0.6 → 1.0 的能力线已收口（策略引擎与取源通道、证据分级与排序、答案层、运维自检），1.1.0 在此基础上补了三块「可验证」：**可度量评测**（`scripts/eval.mjs` 固定 10 题分数表，可跨版本对比）、**判据校验**（`## 判据` 每条要有数字阈值，否则标「（推断）」并降档）、**pricing 渲染兜底**（JS 壳价目页走独立的 Jina 渲染预算取回，按 `via: 'render'` 降档）。1.1.1 只修 1.1.0 实跑暴露的对比题缺陷（括号内联候选清单、对比格 claim 自证、表外价格句回填、冲突段空类占位、渲染兜底计数与实际采用对齐），接口、简报结构、置信度口径、预算模型仍然冻结；做不到的部分集中写在 [LIMITATIONS.md](LIMITATIONS.md)。
 
 **2026-11-16 01:1x 发布守门核实**：`refs/heads/main` = `06171f5`（`chore(release): 1.0.0`），tag `v1.0.0` 已推送并生成 Release id **446220562**（正文 2451 字，`node scripts/verify-release.mjs v1.0.0` 与 tag 上的 CHANGELOG 逐字一致）；三门槛 `check-docs` / `check-release` / `test-all` 全绿（19 个文件，实测 **417 例**——发布正文里写的 415 是发布那一刻的计数，之后 repo-hygiene 又加了 2 例）；CI 在 Node 20/22/24 + `windows smoke (node 22)` 上跑同一套测试，另有 CodeQL。<br>**注意**：`v1.0.0` 是**轻量 tag**（另一条线直接 `git tag` 后推送，与历史遗留的 `v0.9.2` 同类），已推送的 tag 不移动、不删除，所以这个例外只记录不修正（`v1.0.1` 从未打 tag，`v1.0.2` 同样是轻量 tag，见下条）。
 
@@ -10,19 +10,21 @@
 
 **2026-11-16 10:50 发布守门核实（1.1.0）**：`refs/heads/main` = `7657960`（`chore(release): 1.1.0`）+ 本文档更新，`package.json.version` = `1.1.0`；tag **`v1.1.0`** 指向 `7657960`（**轻量 tag**，第四例），Release 页 id **446549499**（正文 1654 字，`node scripts/verify-release.mjs v1.1.0` 与 tag 上的 CHANGELOG 逐字一致）；三门槛 `check-docs` / `check-release` / `test-all` 全绿（**20 个文件、实测 458 例**；1.0.2 时为 19 文件 426 例）；CI `CI#45`（test node 20/22/24 + windows smoke + docs & metadata + analyze）与 `CodeQL#17` 在 `7657960` 上全 success。<br>**本次守门补的内容**：`[1.1.0]` 小节原本只写了评测一块、开头还留着「本版不改 `package.json`、不动 `lib/` 管线」的旧说法，已改成三块（评测 / 判据校验 / 渲染兜底）并补上渲染兜底的门控、白名单、独立预算、`via: 'render'` 降档与可见性，另加 `### 仓库` 段（评测工具链进必需文件、docs 索引检查改递归）和实测计数。
 
+**2026-11-16 11:06 发布守门核实（1.1.1）**：`refs/heads/main` = `b5ac7cd`（`chore(release): 1.1.1`），`package.json.version` = `1.1.1`；tag **`v1.1.1`** 指向 `b5ac7cd`（**轻量 tag**，第五例），Release 页 id **446562656**（正文 2655 字，`node scripts/verify-release.mjs v1.1.1` 与 tag 上的 CHANGELOG 逐字一致）；三门槛全绿（**20 个文件、实测 464 例**；1.1.0 时为 458 例）。<br>**本次守门补的内容**：`[Unreleased]` 里还留着两条「### 仓库」副本——它们已随 1.1.0 写进正式小节，而且措辞是内部协作口径（「另一条线先合入后再删」），不适合出现在对外变更日志里，已清空（提交 `80af670`）；同时 `.gitignore` 忽略仓库根目录的 `_*.mjs` 一次性脚本（`_rel.mjs` 这种发版前改版本号的小工具，正式脚本都在 `scripts/`），避免另一条线用 `git add -A` 把它带进仓库。
+
 ## 仓库与版本
 
-- 本地：`D:\Total\dsh-global-research`（git，`package.json.version` = `1.1.0`）
+- 本地：`D:\Total\dsh-global-research`（git，`package.json.version` = `1.1.1`）
 - 远端：<https://github.com/qibufengliu-design/dsh-global-research>
 - 版本事实来源：`package.json.version`；`scripts/retrieval-check.mjs` 的 `VERSION` 与它同步（自检输出里会打印版本），其余地方不重复写版本号。
-- 历史：0.6.0 起按「一版一提交 + `vX.Y.Z` tag」发布，`v0.9.0`–`v1.1.0` 均已推送到远端，15 个版本各自有 Release 页（`v1.0.1` 从未打 tag，其修复并入 `v1.0.2`）（`v0.9.0`–`v0.9.4` 由 2026-11-15 用 API 补建，之后由 `release.yml` 在推 tag 时自动创建）。除 `v0.9.2`（历史遗留）、`v1.0.0`、`v1.0.2`、`v1.1.0`（另一条线直接推的轻量 tag）外都是 annotated tag。
+- 历史：0.6.0 起按「一版一提交 + `vX.Y.Z` tag」发布，`v0.9.0`–`v1.1.1` 均已推送到远端，16 个版本各自有 Release 页（`v1.0.1` 从未打 tag，其修复并入 `v1.0.2`）（`v0.9.0`–`v0.9.4` 由 2026-11-15 用 API 补建，之后由 `release.yml` 在推 tag 时自动创建）。除 `v0.9.2`（历史遗留）、`v1.0.0`、`v1.0.2`、`v1.1.0`、`v1.1.1`（另一条线直接推的轻量 tag）外都是 annotated tag。
 - 设计笔记归档在 [docs/design/](docs/design/README.md)（各版设计稿、真实网络回归记录、仓库审计记录，索引在该目录的 README）
 - 变更历史全在 [CHANGELOG.md](CHANGELOG.md)（1.0.0 小节是 0.6 → 1.0 的能力线汇总），本文不复制。
 
 ## 怎么跑
 
 ```powershell
-node scripts/test-all.mjs        # 逐文件跑全部测试（20 个文件 / 458 例，2026-11-16 实测全绿）
+node scripts/test-all.mjs        # 逐文件跑全部测试（20 个文件 / 464 例，2026-11-16 实测全绿）
 node scripts/check-docs.mjs      # 仓库整洁性：必需文件、链接、CHANGELOG、零依赖、参数表、JSON 示例、文档命令、密钥/本机路径、workflow 结构、docs 索引
 node scripts/check-release.mjs   # 发布一致性：版本号 ↔ CHANGELOG 小节 ↔ retrieval-check 的 VERSION、预算表 ↔ DEPTH_PROFILES、文档里没有写死的例数
 node scripts/verify-release.mjs vX.Y.Z   # 远端 Release 正文 ↔ 该 tag 上的 CHANGELOG 小节（逐字）
