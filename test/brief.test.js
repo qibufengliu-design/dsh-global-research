@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   ACTION_CHECKLIST_HEADING, appendConflictSection, appendReferences, appendRetrievalFlow, appendStats, applyZeroEvidenceOptions, assignSourceIds, buildResult,
   checkCompareRows, computeConfidence, COST_MISSING_CELL, COST_OVERVIEW_HEADER, COST_OVERVIEW_NOTE, DECISION_CRITERIA_HEADING, ensureSections, fallbackBrief, fillEmptyCompareCells, formatRetrievalFlow, gradeSource, groundCriteria, isPriceColumnHeader, markUnsourcedNumbers, missingSections, PRICE_SEE_NOTE, requiredSectionsFor,
-  sanitizeCompareTable, UNSOURCED_NUMBER_MARK, validateCitations, zeroEvidenceGapText,
+  sanitizeCompareTable, UNSOURCED_NUMBER_MARK, validateCitations, validateCriteria, zeroEvidenceGapText,
 } from '../lib/brief.js'
 import { findSelfContradictions } from '../lib/assertions.js'
 import { autoDepth, buildQueries, groupEvidence, resolveDepth, shortFragments } from '../lib/pipeline.js'
@@ -1425,4 +1425,131 @@ test('buildResult fills a compare table from clusters and cites the delivered so
   for (const match of result.brief.matchAll(/\[(S\d+)\]/g)) {
     assert.ok(result.sources.some((source) => source.id === match[1]), match[1])
   }
+})
+
+test('validateCriteria keeps a 判据 section whose bullets all carry thresholds (1.1.0)', () => {
+  const brief = [
+    '## 结论', '不该拆 [S1]。', '',
+    '## 判据',
+    '- 团队 ≥ 8 人且日发布 ≥ 3 次才划算',
+    '- 回滚成本超过 2 人日时不宜拆',
+    '- 故障定位 > 30 分钟则先拆分',
+    '',
+    '## 置信度', 'high', '',
+    '## 未解决', '- 无',
+  ].join('\n')
+  const report = validateCriteria(brief, { confidence: 'high' })
+  assert.equal(report.brief, brief)
+  assert.equal(report.weak, 0)
+  assert.equal(report.total, 3)
+  assert.equal(report.downgraded, false)
+})
+
+test('validateCriteria labels 推断 on mostly-prose 判据 and lowers the verdict one notch (1.1.0)', () => {
+  const brief = [
+    '## 结论', '看情况 [S1]。', '',
+    '## 判据',
+    '- 团队规模要够大才值得拆',
+    '- 要评估现有架构的耦合度',
+    '- 团队 ≥ 8 人时再考虑',
+    '',
+    '## 置信度', 'high', '',
+    '## 未解决', '- 无',
+  ].join('\n')
+  const report = validateCriteria(brief, { confidence: 'high' })
+  assert.equal(report.weak, 2)
+  assert.equal(report.total, 3)
+  assert.equal(report.downgraded, true)
+  assert.match(report.brief, /^- 团队规模要够大才值得拆（推断）$/m)
+  assert.match(report.brief, /^- 要评估现有架构的耦合度（推断）$/m)
+  assert.match(report.brief, /^- 团队 ≥ 8 人时再考虑$/m)
+  assert.match(report.brief, /^## 置信度\nmedium$/m)
+  assert.match(report.brief, /^- 判据偏软：2\/3 条缺少可量化阈值，结论按证据强度下调$/m)
+  // `low` has nowhere to fall, and no confidence means no verdict to lower.
+  assert.equal(validateCriteria(brief, { confidence: 'low' }).downgraded, false)
+  assert.equal(validateCriteria(brief).downgraded, false)
+})
+
+test('validateCriteria never doubles a provenance mark and skips 无 and citation ids (1.1.0)', () => {
+  const brief = [
+    '## 判据',
+    '- 阈值要看团队成熟度（推断）',
+    '- 团队已有微服务经验 [S1]',
+    '- 无',
+    '',
+    '## 置信度', 'medium',
+  ].join('\n')
+  const report = validateCriteria(brief, { confidence: 'medium' })
+  assert.equal(report.total, 2, '- 无 is not a criterion')
+  assert.equal(report.weak, 2)
+  assert.equal(report.brief.match(/（推断）/g).length, 1)
+  assert.match(report.brief, /^- 团队已有微服务经验 \[S1\]$/m)
+  assert.match(report.brief, /^## 置信度\nlow$/m)
+  // No 未解决 section: the note creates one, and only once.
+  assert.equal(report.brief.match(/判据偏软：/g).length, 1)
+})
+
+test('validateCriteria returns a brief without 判据 byte for byte (1.1.0)', () => {
+  const brief = '## 结论\n该上。\n\n## 置信度\nhigh'
+  const report = validateCriteria(brief, { confidence: 'high' })
+  assert.equal(report.brief, brief)
+  assert.deepEqual(
+    { weak: report.weak, total: report.total, downgraded: report.downgraded },
+    { weak: 0, total: 0, downgraded: false },
+  )
+  assert.equal(validateCriteria('', { confidence: 'high' }).brief, '')
+})
+
+test('validateCriteria is idempotent (1.1.0)', () => {
+  const brief = [
+    '## 判据',
+    '- 看团队规模',
+    '- 需要评估耦合度',
+    '',
+    '## 置信度', 'high', '',
+    '## 未解决', '- 无',
+  ].join('\n')
+  const once = validateCriteria(brief, { confidence: 'high' })
+  const twice = validateCriteria(once.brief, { confidence: 'high' })
+  assert.equal(once.downgraded, true)
+  assert.equal(twice.downgraded, false)
+  assert.equal(twice.brief, once.brief)
+  assert.match(twice.brief, /^## 置信度\nmedium$/m)
+  assert.equal(twice.brief.match(/判据偏软：/g).length, 1)
+})
+
+test('validateCriteria reads Chinese thresholds and magnitudes as decidable (1.1.0)', () => {
+  const lines = [
+    '- 每周发布 3 次以上才拆分',
+    '- 团队八人以上才值得拆',
+    '- 发布频率两倍于同行时',
+    '- 每天至少两次故障',
+    '- P99 延迟 > 200ms',
+    '- 每月 2 次回滚算多',
+  ]
+  for (const line of lines) {
+    const report = validateCriteria(`## 判据\n${line}\n`, { confidence: 'high' })
+    assert.equal(report.weak, 0, line)
+    assert.ok(!report.brief.includes('（推断）'), line)
+  }
+})
+
+test('buildResult delivers the lowered verdict and a matching 置信度 section (1.1.0)', () => {
+  const result = buildResult({
+    brief: [
+      '## 结论', '不该拆 [S1]。', '',
+      '## 判据',
+      '- 团队规模要够大',
+      '- 需要评估耦合度',
+      '- 回滚成本 > 2 人日时不宜拆',
+      '',
+      '## 置信度', 'high',
+    ].join('\n'),
+    sources: [], confidence: 'high', gaps: [], partial: false, depth: 'quick',
+    stats: { questionKind: 'decision', queries: 1, pagesFetched: 1, llmRounds: 1, elapsedMs: 5 },
+  })
+  assert.equal(result.confidence, 'medium')
+  assert.match(result.brief, /^## 置信度\nmedium$/m)
+  assert.match(result.brief, /^- 团队规模要够大（推断）$/m)
+  assert.match(result.brief, /^## 未解决\n- 判据偏软：2\/3 条缺少可量化阈值，结论按证据强度下调$/m)
 })

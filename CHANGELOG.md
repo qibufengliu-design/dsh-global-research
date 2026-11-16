@@ -22,10 +22,12 @@
 - **两种模式**：`--offline` 用内置 fixture（不联网，自检评分器与简报装配）；`--real` 走真引擎 + 真抓取，合成用确定性模板（不调 LLM），结果可复现。`--json` 落盘报告、`--only` 选题、`--baseline` 逐题对比（总分低 3 分以上退出码 1，可直接进 CI）。
 - **共享装配（`scripts/lib/harness.mjs`）**：把 `retrieval-check` 里的取 key（`tavilyKeyFromPatch` / `resolveTavilyKey`）、建 engines、建 `fetchPage` 抽成模块，评测与体检共用同一套装配；`retrieval-check.mjs` 改为从这里导入，导出与输出保持不变。
 - README 新增「评测」小节（怎么跑、权重含义、如何比较版本）；`docs/development.md` 补「评测」一节，并把 `scripts/eval.mjs` / `scripts/lib/harness.mjs` 写进目录结构。
+- **判据校验（`lib/brief.js` `validateCriteria()`）**：decision 题的「## 判据」不再只查段是否存在。逐条 `- ` 行必须给出数字或比较/阈值词（`≥ ≤ > < 超过 至少 以上 以内` 等，中文数字带单位也认），否则补「（推断）」并计为软行；软行超过一半且置信度是 `high` / `medium` 时降一档（high→medium、medium→low），「## 置信度」同步改写，并在「未解决」追加 `- 判据偏软：N/M 条缺少可量化阈值，结论按证据强度下调`（幂等）。没有「## 判据」的简报原样返回；`buildResult()` 的返回对象给出降档后的 `confidence`。
 
 ### Tests
 
 - 新增 `test/eval.test.js`：语料与权重固定、官方来源占比（仓库代码文件不算官方）、表格填充率与「缺表 / 不适用」的区别、decision 必需段缺失、四数缺失与 `adopted=0`、置信度差一档与差两档的记分、baseline 差值判定与缺题、参数解析，以及 offline 端到端（10 题都出分、表格可读、与自身比较不回归）。`node scripts/test-all.mjs` 全绿。
+- 新增判据校验用例：全部命中阈值不降档、过半软行补「（推断）」并降一档且改写「## 置信度」、已有标记不重复、引用行不叠标记、`- 无` 不计分母、无判据段原样返回、幂等，以及 `buildResult()` 端到端返回降档后的置信度。
 
 ## [1.0.2] - 2026-11-16
 
