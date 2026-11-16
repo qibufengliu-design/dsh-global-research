@@ -486,6 +486,15 @@ test('the funnel line is printed in the quick profile and marks reuse on a resum
   assert.match(resumed, /^> 检索流程：识别 4 篇 · 去重后 4 篇 · 可读 12 篇 · 采用 5 篇（续跑：复用 9 页）$/m)
 })
 
+/**
+ * 1.1.1 — the body of 「## 存在冲突」 ('' when the section is absent), so a test can
+ * talk about the conflict section without the 「未解决」 placeholder matching too.
+ */
+function conflictSectionOf(text) {
+  const match = /^## 存在冲突\n([\s\S]*?)(?=\n## |(?![^]))/m.exec(String(text ?? ''))
+  return match ? match[1] : ''
+}
+
 test('冲突 keeps its heading and gains 事实冲突/口径差异/来源自相矛盾 subsections', () => {
   const clusters = [disputedCluster('Node 22 输出上限', ['https://nodejs.org/en/about/releases', 'https://github.com/nodejs/release'])]
   assignSourceIds(clusters)
@@ -503,11 +512,12 @@ test('冲突 keeps its heading and gains 事实冲突/口径差异/来源自相�
   )
   assert.match(brief, /^## 存在冲突$/m)
   assert.match(brief, /^### 事实冲突\n- 输出上限：384K tokens（\[S1\]） · 256K tokens（\[S2\]）\n- Node 22 输出上限（支持）— \[S1\] nodejs\.org\n- Node 22 输出上限（反驳）— \[S2\] github\.com$/m)
-  assert.match(brief, /^### 口径差异\n- 无$/m)
-  assert.match(brief, /^### 来源自相矛盾\n- 无$/m)
+  // 1.1.1 — an empty kind is omitted, not written as 「- 无」: the placeholder
+  // said "no difference" under a heading whose only content was the negation.
+  assert.doesNotMatch(brief, /^### 口径差异/m)
+  assert.doesNotMatch(brief, /^### 来源自相矛盾/m)
+  assert.doesNotMatch(conflictSectionOf(brief), /^-\s*无$/m)
   assert.ok(brief.indexOf('## 存在冲突') < brief.indexOf('### 事实冲突'))
-  assert.ok(brief.indexOf('### 事实冲突') < brief.indexOf('### 口径差异'))
-  assert.ok(brief.indexOf('### 口径差异') < brief.indexOf('### 来源自相矛盾'))
 })
 
 test('口径差异 holds entity and unit differences with a reason instead of calling them facts', () => {
@@ -528,8 +538,10 @@ test('口径差异 holds entity and unit differences with a reason instead of ca
   )
   assert.match(brief, /^### 口径差异\n- 输出上限：65536 tokens（\[S1\]） \/ 131072 tokens（\[S2\]）（对象不同，不可直接比较）\n- 输出价格：0\.2 元（\[S3\]） \/ 0\.03 美元（\[S4\]）（单位不同：元 \/ 美元，不可直接比较）$/m)
   // An incomparable unit is a scope problem, not a factual contradiction.
-  const factBlock = brief.slice(brief.indexOf('### 事实冲突'), brief.indexOf('### 口径差异'))
+  const factBlock = conflictSectionOf(brief).split('### 口径差异')[0]
   assert.doesNotMatch(factBlock, /输出价格/)
+  // 1.1.1 — no kind is written as 「- 无」 when another kind has a finding.
+  assert.doesNotMatch(conflictSectionOf(brief), /^-\s*无$/m)
   // The scope lines replace the legacy 未解决 note instead of duplicating it.
   assert.doesNotMatch(brief, /^- 口径差异：/m)
 })
@@ -548,8 +560,9 @@ test('an unconvertible unit pair reaches 口径差异 even when nothing else is 
     [], mismatched, [], [],
   )
   assert.match(brief, /^## 存在冲突$/m)
-  assert.match(brief, /^### 事实冲突\n- 无$/m)
   assert.match(brief, /^### 口径差异\n- 输入价格：0\.15 美元\/百万 tokens（\[S1\]） \/ 0\.3 元\/百万 tokens（\[S2\]）（单位不同：美元\/百万 tokens \/ 元\/百万 tokens，不可直接比较）$/m)
+  assert.doesNotMatch(brief, /^### 事实冲突/m)
+  assert.doesNotMatch(conflictSectionOf(brief), /^-\s*无$/m)
   assert.doesNotMatch(brief, /^- 口径差异：/m)
 })
 
@@ -571,7 +584,11 @@ test('a page that states two different values for one property is a 来源自相
     '## 结论\nx [S1]\n\n## 置信度\nmedium\n\n## 未解决\n- 无', [], [], [], contradictions,
   )
   assert.match(brief, /^## 存在冲突$/m)
-  assert.match(brief, /^### 事实冲突\n- 无$/m)
+  // 1.1.1 — the reported defect: the section wrote 「- 无」 and then listed the two
+  // self-contradicting values right under it. An empty kind must not be spoken at
+  // all when another kind has a finding.
+  assert.doesNotMatch(brief, /^### 事实冲突/m)
+  assert.doesNotMatch(conflictSectionOf(brief), /^-\s*无$/m)
   assert.match(brief, /^### 来源自相矛盾\n- 输出上限：384K tokens \/ 256K tokens（\[S1\] 同一页面内说法不一致）$/m)
   // Three values on one page are a table, not a self-contradiction.
   assert.equal(findSelfContradictions([{ ...items[0], quote: '输出上限：384K tokens。输出上限：256K tokens。输出上限：128K tokens。' }]).length, 0)
@@ -1425,6 +1442,95 @@ test('buildResult fills a compare table from clusters and cites the delivered so
   for (const match of result.brief.matchAll(/\[(S\d+)\]/g)) {
     assert.ok(result.sources.some((source) => source.id === match[1]), match[1])
   }
+})
+
+// 1.1.1 — the reported run filled the 通义千问 row with 「阿里云 AI 助手导入模型时，
+// 可选模型包括…」: the cluster was owned by 通义千问 (its quote named the vendor)
+// while its claim was about something else, and the filler copied the claim. A
+// claim may only fill the row of an option it names itself.
+test('a compare cell only takes a claim that names its own option (1.1.1)', () => {
+  const clusters = [{
+    claim: '阿里云 AI 助手导入模型时，可选模型包括 qwen-max、qwen-plus 与 Llama 系列。',
+    status: 'confirmed',
+    evidence: [{
+      id: 'S1',
+      url: 'https://help.aliyun.com/zh/model-studio/assistant',
+      title: '阿里云百炼 AI 助手',
+      claim: '阿里云 AI 助手导入模型时，可选模型包括 qwen-max、qwen-plus 与 Llama 系列。',
+      quote: '通义千问（Qwen）系列模型由阿里云提供，可在智能体应用中被引用。',
+    }],
+  }]
+  const table = fillTable(['| 通义千问 | 无证据 | 无证据 | 无证据 |'])
+  const filled = fillEmptyCompareCells(table, clusters, ['通义千问'])
+  const row = filled.split('\n').find((line) => line.startsWith('| 通义千问 |'))
+  assert.ok(row, filled)
+  // The unrelated claim is not borrowed, so every cell keeps the placeholder.
+  assert.match(row, /无证据/)
+  assert.doesNotMatch(row, /可选模型包括/)
+  assert.doesNotMatch(row, /\[S1\]/)
+
+  // A claim that does name the option still fills the row (the gate is not a mute).
+  const named = [{ ...clusters[0], claim: '通义千问的 qwen-max 支持 32K 上下文，可按量计费。' }]
+  const filledNamed = fillEmptyCompareCells(table, named, ['通义千问'])
+  const namedRow = filledNamed.split('\n').find((line) => line.startsWith('| 通义千问 |'))
+  assert.match(namedRow, /32K 上下文[^|]*\[S1\]/)
+})
+
+// 1.1.1 — the DeepSeek row said 无证据 while a price sentence sat right under the
+// table ("$0.6–3.96 / 百万 tokens"). A price sentence outside the table may fill a
+// price cell for the option it names; it is never used for 风险/优势 columns and it
+// never fills a row for another option.
+test('a price sentence under the table fills the price cell it belongs to (1.1.1)', () => {
+  const table = [
+    '## 方案对比',
+    '| 方案 | 输入价 | 风险 |',
+    '| --- | --- | --- |',
+    '| DeepSeek | 无证据 | 无证据 |',
+    '| 通义千问 | 无证据 | 无证据 |',
+    '',
+    '- DeepSeek 输入价 $0.6–3.96 / 百万 tokens，命中缓存更便宜 [S3]',
+    '',
+    '## 置信度',
+    'low',
+  ].join('\n')
+  const filled = fillEmptyCompareCells(table, [], ['DeepSeek', '通义千问'])
+  const ds = filled.split('\n').find((line) => line.startsWith('| DeepSeek |'))
+  assert.match(ds, /\$0\.6–3\.96/)
+  assert.match(ds, /\[S3\]/)
+  // 风险 stays empty: a price is not a risk, and the sentence must not be stretched.
+  assert.match(ds, /无证据/)
+  // The sentence names DeepSeek only, so 通义千问 gets nothing from it.
+  const qwen = filled.split('\n').find((line) => line.startsWith('| 通义千问 |'))
+  assert.match(qwen, /无证据/)
+  assert.doesNotMatch(qwen, /\$0\.6/)
+  assert.doesNotMatch(qwen, /\[S3\]/)
+  // Idempotent: the filled cell is no longer empty.
+  assert.equal(fillEmptyCompareCells(filled, [], ['DeepSeek', '通义千问']), filled)
+})
+
+// 1.1.1 — the same defect at the section level: a model-written 「## 存在冲突」 with a
+// 「- 无」 body is not a finding, so the deterministic self-contradictions replace
+// it instead of being skipped along with the heading.
+test('a placeholder-only 冲突 section is replaced by the findings (1.1.1)', () => {
+  const quote = '输出上限：384K tokens。输出上限：256K tokens。'
+  const items = [{
+    id: 'S1',
+    url: 'https://nodejs.org/en/about/previous-releases',
+    title: 'Node releases',
+    publishedAt: '2026-01-01',
+    claim: quote,
+    quote,
+  }]
+  const contradictions = findSelfContradictions(items)
+  assert.equal(contradictions.length, 1)
+  const placeholder = '## 结论\nx [S1]\n\n## 存在冲突\n- 无\n\n## 置信度\nmedium\n\n## 未解决\n- 无'
+  const out = appendConflictSection(placeholder, [], [], [], contradictions)
+  assert.match(out, /^### 来源自相矛盾$/m)
+  assert.match(out, /输出上限：384K tokens \/ 256K tokens/)
+  assert.doesNotMatch(conflictSectionOf(out), /^-\s*无$/m)
+  assert.match(out, /^## 置信度$/m)
+  // Idempotent: a section that states something is kept as written.
+  assert.equal(appendConflictSection(out, [], [], [], contradictions), out)
 })
 
 test('validateCriteria keeps a 判据 section whose bullets all carry thresholds (1.1.0)', () => {

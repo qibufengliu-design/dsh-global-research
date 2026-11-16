@@ -1542,6 +1542,42 @@ test('compareOptions splits on connectives and drops the background clause (1.0.
   assert.deepEqual(compareOptions('Spring AI 怎么选'), [])
 })
 
+// 1.1.1 — the reported 1.1.0 run compared 「国内四家大模型 API（DeepSeek」,
+// 通义千问 and 豆包: the comma split cut the question's setting clause as the first
+// candidate and the three-cap stopped before Kimi. A bracket list with at least two
+// names is the user's own enumeration and wins over the punctuation split.
+test('compareOptions reads a bracketed enumeration as the candidate list (1.1.1)', () => {
+  const options = compareOptions('国内四家大模型 API（DeepSeek、通义千问、豆包、Kimi）的价格怎么比，我们做一个小型 RAG 产品该选哪家')
+  assert.deepEqual(options, ['DeepSeek', '通义千问', '豆包', 'Kimi'], JSON.stringify(options))
+  // The fragment the list was cut out of never comes back as a candidate.
+  assert.ok(!options.some((option) => /API|国内|大模型/.test(option)), JSON.stringify(options))
+  // An ASCII bracket list is read the same way, in written order.
+  assert.deepEqual(
+    compareOptions('Which vector DB (Pinecone, Weaviate, Milvus) should we use for a RAG product'),
+    ['Pinecone', 'Weaviate', 'Milvus'],
+  )
+  // A bracket holding one name is not a list: the sentence's own split applies.
+  assert.deepEqual(compareOptions('Spring AI 和 LangChain4j 怎么选（Java）'), ['Spring AI', 'LangChain4j'])
+})
+
+// 1.1.1 — a fragment carrying the question's predicate is background, not a
+// candidate: "我们做一个小型 RAG 产品该选哪家" used to become a row of its own.
+test('compareOptions never promotes a predicate fragment to a candidate (1.1.1)', () => {
+  const options = compareOptions('豆包、Kimi 哪家便宜，我们做一个小型 RAG 产品该选哪家')
+  assert.deepEqual(options, ['豆包', 'Kimi'], JSON.stringify(options))
+  assert.ok(!options.some((option) => /我们|产品|RAG/.test(option)), JSON.stringify(options))
+  // A fragment that opens with a name still is that name's segment.
+  assert.deepEqual(
+    compareOptions('Java 后端做 RAG 应用，Spring AI、LangChain4j、Haystack 该怎么选'),
+    ['Spring AI', 'LangChain4j', 'Haystack'],
+  )
+  // A parenthetical aside that enumerates nothing is not a candidate list.
+  assert.deepEqual(
+    compareOptions('DeepSeek 和 Kimi 怎么比（我们做一个小型 RAG 产品该选哪家）'),
+    ['DeepSeek', 'Kimi'],
+  )
+})
+
 test('zero-evidence gap names the trimmed option (0.8.1)', async () => {
   const config = baseConfig()
   config.__fetchPage = compareFetcher()
@@ -2987,6 +3023,20 @@ test('the reference line marks a rendered source with （渲染取回） (1.1.0)
 test('the funnel line carries the render count only when it is non-zero (1.1.0)', () => {
   const base = { identified: 5, deduped: 4, readable: 3, adopted: 1 }
   assert.doesNotMatch(formatRetrievalFlow(base), /渲染兜底/)
+  // Without renderAdopted (a stats object from an older caller) the count stands
+  // alone: an unknown adoption is not annotated.
   assert.match(formatRetrievalFlow({ ...base, renderUsed: 2 }), / · 渲染兜底 2$/)
   assert.match(formatRetrievalFlow({ ...base, renderUsed: 1 }), / · 渲染兜底 1$/)
+})
+
+// 1.1.1 — the reported run showed 「渲染兜底 1」 while 参考 carried no （渲染取回）
+// mark: the rendered page was never adopted. The funnel now says so.
+test('the funnel marks a render fallback that adopted nothing (1.1.1)', () => {
+  const base = { identified: 5, deduped: 4, readable: 3, adopted: 1, renderUsed: 1 }
+  assert.match(formatRetrievalFlow({ ...base, renderAdopted: 0 }), / · 渲染兜底 1（未采用）$/)
+  assert.match(formatRetrievalFlow({ ...base, renderUsed: 2, renderAdopted: 0 }), / · 渲染兜底 2（未采用）$/)
+  // An adopted render keeps the plain count — that page is in 参考 with its mark.
+  const adopted = formatRetrievalFlow({ ...base, renderAdopted: 1 })
+  assert.match(adopted, / · 渲染兜底 1$/)
+  assert.doesNotMatch(adopted, /未采用/)
 })

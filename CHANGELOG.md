@@ -12,6 +12,29 @@
 - 设计笔记归档到 `docs/design/`：0.1 以来的七篇设计稿、真实网络回归记录与仓库审计记录集中到一处，并加 [目录索引](docs/design/README.md)；根目录不再散落设计稿（另一条线先合入后再删根目录副本的那次提交把这件事做完了）。
 - `check-docs` 的文档索引检查改为递归：`docs/` 子目录里的页面必须能从根 README 或所在目录的 `README.md` 索引链到，子目录索引本身也必须从根 README 链到；`docs/design/README.md` 同时纳入链接扫描与 JSON 示例检查。
 
+## [1.1.1]
+
+> 1.1.1 修 1.1.0 实跑暴露的四个对比题缺陷，全部落在既有函数内部，`package.json`、接口、预算模型与简报结构不变。实测题：`国内四家大模型 API（DeepSeek、通义千问、豆包、Kimi）的价格怎么比，我们做一个小型 RAG 产品该选哪家`（standard / compare）。
+
+### Fixed
+
+- **括号内联清单优先（`compareOptions()`，`lib/pipeline.js`）**：1.1.0 把「国内四家大模型 API（DeepSeek」当成候选、且 3 个上限先于 Kimi 用完，正确候选应是括号里的四个名字。新增 `INLINE_OPTION_BRACKET`（`[（(]…[）)]`）扫描：括号内容按 `、，,／|；;` 切开、逐个走 `cleanOptionToken()`、丢掉引导词/背景词/谓词片段，某组仍有 ≥2 个名字就直接作为候选清单（上限 `MAX_BRACKET_OPTIONS = 6`）且不再对这条 source 做标点切分；含「该怎么 / 该选 / 选哪 / 哪家 / 怎么比」的片段只在以名字开头时保留（`startsWithOptionName()`），背景句不再成为候选。单名括号退回原路径，原路径 3 个上限不变。
+- **对比格 claim 自证（`fillEmptyCompareCells()` / `optionClaims()`，`lib/brief.js`）**：通义千问行曾被塞进「阿里云 AI 助手导入模型时，可选模型包括…」——cluster 归属正确（quote 提到了该厂商），但被复制的 claim 谈的是别的产品。现在一段文本必须**自己**出现该候选的核心 token（`mentionsOption()`：`optionKey` 包含 / 中文 ≥2 字子串 / 拉丁词边界）才能进候选格，cluster 级 gate 只作快筛；提不到就保留「无证据」，不借无关引文。
+- **表外价格句回填（`fillEmptyCompareCells()`）**：DeepSeek 行写「无证据」而表下就有 `$0.6–3.96 / 百万 tokens [S3]`。现在扫描表格行区间外的非标题、非表格、非引用行，要求命中 `PRICE_CLAIM` 且自带 `[S#]`，只用于价格列（新增 `isPriceCellColumn()`：`PRICE_COLUMN_HEADER_RE` 命中且不是风险/适用/`成本概览` 列），按「提及候选名 + 含货币价格词」归属、提及候选越少越优先，引用沿用句内 `[S#]`；风险/优势列仍不用它，函数幂等。
+- **冲突段不再写空类占位（`conflictSectionText()` / `appendConflictSection()` / `ensureSections()`，`lib/brief.js`）**：1.1.1 实跑同一段里既写 `- 无` 又列着两条「来源自相矛盾」——原先三类全写、空类补 `- 无`，`findSelfContradictions()` 的结果与占位并存。现在只拼非空的类，三类都空整段不出现（`unitMismatch` 仍单独触发，口径行意外为空时保留一条 `- 无` 防御）。另外模型自己写的 `## 存在冲突` 若正文只有 `###` 标题与 `- 无`/`无`（`conflictBodyIsPlaceholder()`），这两处会用确定性发现原地替换整段，不再因为标题已存在就跳过（幂等）。
+- **渲染兜底计数与实际采用对齐（`lib/pipeline.js` + `formatRetrievalFlow()`，`lib/brief.js`）**：1.1.1 实跑流程行写「渲染兜底 1」而参考区没有「（渲染取回）」标记，原因是那一次渲染页最终未被引用。新增 `stats.renderAdopted`（`citedOnly(finalSources)` 里 `via: 'render'` 的数量），`renderUsed > 0` 且 `renderAdopted === 0` 时流程行写 ` · 渲染兜底 N（未采用）`；有渲染页被采用仍写原样，`stats` 不含 `renderAdopted` 时不加注（兼容旧缓存/旧调用方）。
+
+### Tests
+
+- `test/pipeline.test.js` 新增 3 例：括号清单解析（实测题 → `['DeepSeek','通义千问','豆包','Kimi']`、ASCII 三选、单名括号不算清单）、谓词片段不当候选（`豆包、Kimi 哪家便宜…` → 2 个名字、Java 后端题仍 3 个、括号里的旁白被忽略）、渲染兜底「（未采用）」注记（`renderAdopted: 0` 加注、`: 1` 不加注、缺省不加注）。既有 1.1.0 流程行断言保持通过。
+- `test/brief.test.js` 新增 3 例：claim 未提选项 → 该行保持「无证据」、换成提到候选的 claim 后正常填充并带 `[S1]`；表外价格句回填 DeepSeek 输入价（带 `[S3]`，风险列仍「无证据」，不串到通义千问行，二次调用字节相同）；只有 `- 无` 的「## 存在冲突」被 `findSelfContradictions()` 结果替换（来源自相矛盾行出现、段内无 `- 无`、幂等）。
+- 冲突段既有 4 例改为 1.1.1 契约（新增 `conflictSectionOf()` helper）：空类标题不出现、段内无 `- 无`；纯 entity 口径差异仍走未解决注记；「同一页面两个不同值」只出「来源自相矛盾」不出「事实冲突」。
+- `node scripts/test-all.mjs` 全绿（20 个测试文件）。
+
+### 文档
+
+- `docs/architecture.md`：「候选解析与空格回填（1.0.1）」补「括号内联清单优先（1.1.1）」「claim 自证（1.1.1）」「表外价格句回填（1.1.1）」三条；「pricing 渲染兜底」补 `stats.renderAdopted` 与「（未采用）」；「冲突三分」改为「有真实条目才写该类」，并补 1.1.1 的占位替换规则。
+
 ## [1.1.0]
 
 > 1.1.0 是三块「从可信走向可验证」的收口：① 可度量评测——把「这次改动到底变好还是变差」从肉眼判断变成一张分数表（`scripts/eval.mjs`、`scripts/lib/harness.mjs`、`test/eval.test.js`）；② 判据校验——decision 题的「## 判据」每条必须给出数字阈值或比较词，否则补「（推断）」并在过半时降一档置信度；③ pricing 渲染兜底——JS 壳价目页走独立的 Jina 渲染预算取回，并按 `via: 'render'` 降档。版本号从 1.0.2 升到 1.1.0；管线只在 pricing 通道增加了渲染兜底一层，既有接口、简报结构、置信度口径与预算模型不变。
