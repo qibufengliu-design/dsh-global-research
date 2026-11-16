@@ -209,6 +209,7 @@ node scripts/check-release.mjs  # 发布一致性：版本号、CHANGELOG 小节
 | [docs/release.md](docs/release.md) | 版本号规则、发布清单、推送环境要求 |
 | [LIMITATIONS.md](LIMITATIONS.md) | 已知限制：做不到什么、为什么、以及怎么绕 |
 | [CHANGELOG.md](CHANGELOG.md) | 每个版本改了什么 |
+| [docs/design/README.md](docs/design/README.md) | 设计笔记归档：0.1 以来的设计稿、回归记录、审计记录（按时间排列的索引） |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 开发环境、提交规范、PR 检查表 |
 | [SECURITY.md](SECURITY.md) | 支持版本、漏洞报告方式与响应时间 |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 社区行为准则 |

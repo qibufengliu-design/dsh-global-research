@@ -348,7 +348,7 @@ test('checkDocsIndex flags a docs page nobody links to', () => {
     const failures = []
     const passes = []
     checkDocsIndex(dir, { fail: (line) => failures.push(line), pass: (line) => passes.push(line) })
-    assert.deepEqual(failures, ['docs 文档没有从 README 链到：docs/orphan.md'])
+    assert.deepEqual(failures, ['docs 文档没有从 README 或其所在目录索引链到：docs/orphan.md'])
     assert.deepEqual(passes, [])
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -366,7 +366,34 @@ test('checkDocsIndex passes when every page is linked', () => {
     const passes = []
     checkDocsIndex(dir, { fail: (line) => failures.push(line), pass: (line) => passes.push(line) })
     assert.deepEqual(failures, [])
-    assert.deepEqual(passes, ['docs/2 篇文档都能从 README 链到'])
+    assert.deepEqual(passes, ['docs/2 篇文档都能从 README 或所在目录索引链到'])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('checkDocsIndex reaches nested docs through the subdirectory index', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-docsindex-nested-'))
+  try {
+    mkdirSync(join(dir, 'docs', 'design'), { recursive: true })
+    writeFileSync(join(dir, 'README.md'), '# 标题\n\n| [docs/design/README.md](docs/design/README.md) | 设计归档 |\n')
+    writeFileSync(join(dir, 'docs/design/README.md'), '# 设计归档\n\n| [a](2026-01-01-a.md) | A |\n')
+    writeFileSync(join(dir, 'docs/design/2026-01-01-a.md'), '# A\n')
+    writeFileSync(join(dir, 'docs/design/orphan.md'), '# 没人链的归档\n')
+
+    const failures = []
+    const passes = []
+    checkDocsIndex(dir, { fail: (line) => failures.push(line), pass: (line) => passes.push(line) })
+    assert.deepEqual(failures, ['docs 文档没有从 README 或其所在目录索引链到：docs/design/orphan.md'])
+    assert.deepEqual(passes, [])
+
+    // 子目录索引本身没从根 README 链到 → 单独报一条；索引里链到的页面不重复报
+    writeFileSync(join(dir, 'README.md'), '# 标题\n\n没有索引链接。\n')
+    const second = []
+    checkDocsIndex(dir, { fail: (line) => second.push(line), pass: () => {} })
+    assert.ok(second.includes('docs 子目录索引没有从 README 链到：docs/design/README.md'), second.join('\n'))
+    assert.ok(second.includes('docs 文档没有从 README 或其所在目录索引链到：docs/design/orphan.md'), second.join('\n'))
+    assert.ok(!second.some((line) => line.includes('2026-01-01-a.md')), second.join('\n'))
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

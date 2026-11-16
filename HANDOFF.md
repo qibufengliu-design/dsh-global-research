@@ -14,6 +14,7 @@
 - 远端：<https://github.com/qibufengliu-design/dsh-global-research>
 - 版本事实来源：`package.json.version`；`scripts/retrieval-check.mjs` 的 `VERSION` 与它同步（自检输出里会打印版本），其余地方不重复写版本号。
 - 历史：0.6.0 起按「一版一提交 + `vX.Y.Z` tag」发布，`v0.9.0`–`v1.0.2` 均已推送到远端，14 个版本各自有 Release 页（`v1.0.1` 从未打 tag，其修复并入 `v1.0.2`）（`v0.9.0`–`v0.9.4` 由 2026-11-15 用 API 补建，之后由 `release.yml` 在推 tag 时自动创建）。除 `v0.9.2`（历史遗留）、`v1.0.0`、`v1.0.2`（另一条线直接推的轻量 tag）外都是 annotated tag。
+- 设计笔记归档在 [docs/design/](docs/design/README.md)（各版设计稿、真实网络回归记录、仓库审计记录，索引在该目录的 README）
 - 变更历史全在 [CHANGELOG.md](CHANGELOG.md)（1.0.0 小节是 0.6 → 1.0 的能力线汇总），本文不复制。
 
 ## 怎么跑

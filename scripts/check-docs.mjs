@@ -21,7 +21,7 @@
  * `checkRepository()` 同时被 test/repo-hygiene.test.js 直接调用，测试不落盘、不起子进程。
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, posix, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const DEFAULT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -68,6 +68,7 @@ const LINK_SCAN = [
   'docs/configuration.md',
   'docs/development.md',
   'docs/release.md',
+  'docs/design/README.md',
 ]
 
 // [文字](目标 "可选标题") —— 图片语法 ![..](..) 也走这里
@@ -362,7 +363,8 @@ export function checkLeaks(root, report) {
 }
 
 /**
- * 第 10 项：`docs/` 下的每篇文档都必须能从 README 的文档索引链到。
+ * 第 10 项：`docs/` 下（含子目录）的每篇文档都必须能从 README 的文档索引链到，
+ * 或者从它所在目录的 `README.md` 索引链到；子目录的索引本身必须能从根 README 链到。
  * 新写一页 docs 却没人能发现，等于没写。
  * @param {string} root
  * @param {{ fail: (m: string) => void, pass: (m: string) => void }} report
@@ -370,26 +372,60 @@ export function checkLeaks(root, report) {
 export function checkDocsIndex(root, report) {
   const docsDir = join(root, 'docs')
   if (!existsSync(docsDir)) return
-  const pages = readdirSync(docsDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
-    .map((entry) => `docs/${entry.name}`)
-    .sort()
+
+  const pages = []
+  const indexes = []
+  const walk = (relDir) => {
+    for (const entry of readdirSync(join(root, relDir), { withFileTypes: true })) {
+      const rel = `${relDir}/${entry.name}`
+      if (entry.isDirectory()) walk(rel)
+      else if (entry.isFile() && entry.name.endsWith('.md')) {
+        if (entry.name === 'README.md' && relDir !== 'docs') indexes.push(rel)
+        else pages.push(rel)
+      }
+    }
+  }
+  walk('docs')
+  pages.sort()
   if (!pages.length) return
 
   const readmePath = join(root, 'README.md')
   if (!existsSync(readmePath)) return
-  const readme = readFileSync(readmePath, 'utf8')
-  LINK_PATTERN.lastIndex = 0
-  const linked = new Set()
-  let match
-  while ((match = LINK_PATTERN.exec(readme)) !== null) {
-    const [pathPart] = match[1].split('#')
-    if (pathPart) linked.add(pathPart.replaceAll('\\', '/'))
+
+  /** 读取一个索引文件里的相对链接，按该文件所在目录解析成仓库相对路径。 */
+  const linksOf = (file) => {
+    const dir = posix.dirname(file)
+    const body = readFileSync(join(root, file), 'utf8')
+    const linked = new Set()
+    LINK_PATTERN.lastIndex = 0
+    let match
+    while ((match = LINK_PATTERN.exec(body)) !== null) {
+      const [pathPart] = match[1].split('#')
+      if (!pathPart || /^(?:[a-z]+:)?\/\//i.test(pathPart)) continue
+      linked.add(posix.normalize(posix.join(dir === '.' ? '' : dir, pathPart.replaceAll('\\', '/'))))
+    }
+    return linked
   }
 
-  const orphan = pages.filter((page) => !linked.has(page))
-  for (const page of orphan) report.fail(`docs 文档没有从 README 链到：${page}`)
-  if (!orphan.length) report.pass(`docs/${pages.length} 篇文档都能从 README 链到`)
+  const fromRoot = linksOf('README.md')
+  const orphans = []
+  const orphanIndexes = []
+  for (const index of indexes) {
+    if (!fromRoot.has(index)) orphanIndexes.push(index)
+  }
+  for (const page of pages) {
+    if (fromRoot.has(page)) continue
+    const localIndex = `${posix.dirname(page)}/README.md`
+    if (indexes.includes(localIndex) && linksOf(localIndex).has(page)) continue
+    orphans.push(page)
+  }
+
+  for (const index of orphanIndexes) report.fail(`docs 子目录索引没有从 README 链到：${index}`)
+  for (const page of orphans) report.fail(`docs 文档没有从 README 或其所在目录索引链到：${page}`)
+  const total = pages.length + indexes.length
+  if (!orphanIndexes.length && !orphans.length) {
+    report.pass(`docs/${total} 篇文档都能从 README 或所在目录索引链到`)
+  }
 }
 
 /**
