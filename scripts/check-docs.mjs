@@ -56,6 +56,8 @@ const REQUIRED_FILES = [
   'scripts/check-release.mjs',
   'scripts/release-notes.mjs',
   'scripts/verify-release.mjs',
+  'scripts/eval.mjs',
+  'scripts/lib/harness.mjs',
 ]
 
 const LINK_SCAN = [
