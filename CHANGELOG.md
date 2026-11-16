@@ -7,11 +7,6 @@
 
 ## [Unreleased]
 
-### 仓库
-
-- 设计笔记归档到 `docs/design/`：0.1 以来的七篇设计稿、真实网络回归记录与仓库审计记录集中到一处，并加 [目录索引](docs/design/README.md)；根目录不再散落设计稿（另一条线先合入后再删根目录副本的那次提交把这件事做完了）。
-- `check-docs` 的文档索引检查改为递归：`docs/` 子目录里的页面必须能从根 README 或所在目录的 `README.md` 索引链到，子目录索引本身也必须从根 README 链到；`docs/design/README.md` 同时纳入链接扫描与 JSON 示例检查。
-
 ## [1.1.1]
 
 > 1.1.1 修 1.1.0 实跑暴露的四个对比题缺陷，全部落在既有函数内部，`package.json`、接口、预算模型与简报结构不变。实测题：`国内四家大模型 API（DeepSeek、通义千问、豆包、Kimi）的价格怎么比，我们做一个小型 RAG 产品该选哪家`（standard / compare）。

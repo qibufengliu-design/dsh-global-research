@@ -25,3 +25,5 @@ tmp-*
 probe-*.mjs
 .tmp/
 .tmp-*       # 测试重定向日志（.tmp-testout.txt 之类）
+# 仓库根目录的一次性脚本（`_rel.mjs` 这种发版前改版本号的小工具），脚本目录在 scripts/
+/_*.mjs
